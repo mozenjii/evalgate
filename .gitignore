@@ -1,0 +1,29 @@
+# environments and secrets
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+
+# python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+dist/
+build/
+
+# data and run output
+data/raw/
+data/cache/
+runs/
+*.sqlite
+*.log
+
+# editors and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
