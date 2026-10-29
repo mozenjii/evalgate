@@ -17,6 +17,7 @@ only, which is not a statistical claim.
 
 from __future__ import annotations
 
+import hashlib
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -304,7 +305,9 @@ def paired_binary(
     if discordant == 0:
         # Every item scored the same under both versions, so the difference is exactly zero --
         # but zero disagreements out of twenty is not proof of equality. Bound the discordance
-        # rate itself instead; at 95% this is close to the rule of three, 3/n.
+        # rate itself instead. This is the two-sided bound, 1 - (alpha/2)**(1/n), which is
+        # roughly 3.7/n at 95% rather than the one-sided rule of three's 3/n; two-sided keeps
+        # it consistent with every other interval here.
         _, bound = clopper_pearson(0, n, confidence)
         interval = Interval(point=0.0, low=-bound, high=bound, confidence=confidence)
     else:
@@ -369,6 +372,11 @@ def paired_continuous(
 ) -> PairedResult:
     """Compare two versions on a continuous scorer with a BCa bootstrap.
 
+    With no seed, one is derived from the data rather than left to chance. A gate whose
+    verdict can change between two runs of the same commit is the failure a CI check exists
+    to prevent, and an unseeded default would make that the normal case. Deriving it from the
+    differences keeps reruns identical while still giving different data a different stream.
+
     The per-item differences are resampled, never the two arrays separately: resampling them
     independently would destroy the pairing that makes the comparison worth doing.
 
@@ -416,13 +424,19 @@ def paired_continuous(
             p_value=None,
         )
 
-    generator = np.random.default_rng(seed)
+    generator = np.random.default_rng(seed if seed is not None else _seed_from(differences))
     draws = generator.integers(0, n, size=(resamples, n))
     resampled: npt.NDArray[np.float64] = differences[draws]
     means: npt.NDArray[np.float64] = resampled.mean(axis=1)
 
+    # Mid-rank, counting ties as half. The obvious reading is "strictly less than", and on
+    # continuous data the two agree because exact ties essentially never occur. They diverge
+    # systematically once the differences take few distinct values -- a scorer rounded to two
+    # decimals, or set F1 over small sets -- and the strict form then biases the correction
+    # downwards on every such slice, which no tolerance would separate from a bug.
     fewer: npt.NDArray[np.bool_] = means < observed
-    below = int(fewer.sum()) / resamples
+    tied: npt.NDArray[np.bool_] = means == observed
+    below = (int(fewer.sum()) + int(tied.sum()) / 2.0) / resamples
     # At the extremes the normal quantile is infinite. Clamping to half a resample is the finest
     # resolution the resampling can express, so this reports the limit of the evidence rather
     # than an infinity.
@@ -445,6 +459,17 @@ def paired_continuous(
         method="bootstrap_bca",
         p_value=None,
     )
+
+
+def _seed_from(differences: npt.NDArray[np.float64]) -> int:
+    """Derive a reproducible seed from the data itself.
+
+    Used when the caller supplies none. Hashing the raw bytes of the differences means two
+    runs over the same data resample identically, so a verdict cannot change between two
+    builds of the same commit, while genuinely different data still gets its own stream.
+    """
+    digest = hashlib.blake2b(differences.tobytes(), digest_size=8).digest()
+    return int.from_bytes(digest, "big")
 
 
 def _percentile(ordered: npt.NDArray[np.float64], fraction: float) -> float:

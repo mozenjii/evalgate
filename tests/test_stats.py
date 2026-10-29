@@ -40,7 +40,7 @@ def test_interval_brackets_the_observed_proportion() -> None:
 def test_zero_successes_pins_the_lower_bound_at_zero() -> None:
     low, high = clopper_pearson(0, 20)
     assert low == 0.0
-    # Rule of three: the upper bound for zero events in twenty trials sits near 3/20.
+    # Two-sided exact bound for zero events in twenty trials: 1 - 0.025**(1/20) ~= 0.168.
     assert 0.12 < high < 0.20
 
 
@@ -397,3 +397,39 @@ def test_binary_bounds_stay_on_the_difference_scale() -> None:
 
     assert -1.0 <= interval.low <= interval.high <= 1.0
     assert not math.isnan(interval.low)
+
+
+def test_an_unseeded_bootstrap_is_still_reproducible() -> None:
+    # The gate must not be able to change its mind between two builds of the same commit, and
+    # the unseeded call is the common path, so it cannot be left to a fresh random stream.
+    baseline = [float((i * 17) % 13) for i in range(50)]
+    candidate = [value + ((i * 11) % 7) / 10.0 for i, value in enumerate(baseline)]
+
+    first = paired_continuous(baseline, candidate, resamples=2_000)
+    second = paired_continuous(baseline, candidate, resamples=2_000)
+
+    assert first.interval == second.interval
+
+
+def test_different_data_gets_a_different_resample_stream() -> None:
+    # Deriving the seed from the data must not collapse into one fixed seed for everything.
+    first = [float((i * 17) % 13) for i in range(50)]
+    second = [value + 1.0 if index % 3 == 0 else value for index, value in enumerate(first)]
+    shifted = [value + 0.25 for value in first]
+
+    one = paired_continuous(first, shifted, resamples=2_000)
+    two = paired_continuous(second, shifted, resamples=2_000)
+
+    assert one.interval != two.interval
+
+
+def test_ties_in_the_resample_distribution_count_as_half() -> None:
+    # Differences taking few distinct values make exact ties common. Counting only the strictly
+    # smaller resample means would bias the correction downwards on every such slice.
+    baseline = [0.0] * 40
+    candidate = [0.0 if index % 2 else 1.0 for index in range(40)]
+
+    result = paired_continuous(baseline, candidate, seed=7, resamples=4_000)
+
+    assert result.interval.low < result.interval.point < result.interval.high
+    assert 0.0 <= result.interval.low and result.interval.high <= 1.0
