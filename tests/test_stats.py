@@ -432,4 +432,4 @@ def test_ties_in_the_resample_distribution_count_as_half() -> None:
     result = paired_continuous(baseline, candidate, seed=7, resamples=4_000)
 
     assert result.interval.low < result.interval.point < result.interval.high
-    assert 0.0 <= result.interval.low and result.interval.high <= 1.0
+    assert result.interval.low >= 0.0 and result.interval.high <= 1.0
