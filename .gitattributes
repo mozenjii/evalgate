@@ -1,3 +1,6 @@
+# Byte-identical comparison is a build gate here, not a preference. Letting git rewrite line
+# endings on checkout makes any byte comparison (generated-output drift, hashes, fixtures) fail on
+# every Windows working copy, and a check that fails for no reason gets switched off within a month.
 * text=auto eol=lf
 
 *.png binary
