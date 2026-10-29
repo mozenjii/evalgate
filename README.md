@@ -46,6 +46,29 @@ A tool that judges other tools needs its own evaluation. I'll build a small demo
 - [ ] Failure-to-case promotion and log mining
 - [ ] Injected-regression benchmark and write-up
 
+## Development
+
+Requires [uv](https://docs.astral.sh/uv/). The interpreter and every tool version are
+pinned, so a fresh checkout runs the same toolchain I do.
+
+```bash
+uv sync --all-groups
+uv run python tools/check.py
+```
+
+That one command runs every gate: formatting, lint, types, documentation links, and
+tests against a coverage floor. It is exactly what CI runs. Pass a gate name to run one
+of them while you work, for example `uv run python tools/check.py types`.
+
+A gate that has never failed is not known to work, so there is a second command that
+makes each one fail on purpose and requires it to notice:
+
+```bash
+uv run python tools/verify_gates.py
+```
+
+Tested on Python 3.11 and 3.12.
+
 ## Related projects
 
 Part of a set of six projects about building LLM systems you can trust:
