@@ -39,13 +39,17 @@ Source = "https://github.com/mozenjii/evalgate"
 dev = [
   "ruff==0.14.2",
   "pyright==1.1.406",
-  "pytest==8.4.2",
+  "pytest==9.0.3",
   "pytest-cov==7.0.0",
   # The independent oracle. These are test-only on purpose: if the statistics module
   # imported scipy, "agrees with scipy" would mean nothing. Keeping them out of the
   # runtime dependencies is what makes the agreement evidence.
   "scipy==1.16.2",
   "statsmodels==0.14.6",
+  # Dependency vulnerability scan. Not part of `check`: it queries a remote advisory
+  # database, and a gate that needs the network is a gate that fails for reasons unrelated
+  # to the change. It runs as its own CI job instead.
+  "pip-audit==2.9.0",
 ]
 
 [build-system]
