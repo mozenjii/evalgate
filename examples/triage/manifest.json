@@ -1,0 +1,18 @@
+{
+  "name": "triage",
+  "version": "1",
+  "items_file": "items.jsonl",
+  "content_sha256": "b92fbd4b62d3624bb2dfb25e9a6b7b32096f85d194671a65fbb91388215e7903",
+  "slice_dimensions": {
+    "intent": [
+      "billing",
+      "refunds",
+      "warranty"
+    ],
+    "length": [
+      "short",
+      "long"
+    ]
+  },
+  "description": "Synthetic support-ticket triage, for exercising the pipeline."
+}

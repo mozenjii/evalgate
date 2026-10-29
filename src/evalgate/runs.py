@@ -413,6 +413,37 @@ class RunStore:
             raise StoreError(f"no such run: {run_id!r}")
         return _record_from_row(row)
 
+    def resolve(self, prefix: str) -> str:
+        """Expand an unambiguous run-id prefix into the full id.
+
+        Run ids are long enough to be unique and too long to retype, so listings show a short
+        prefix. A listing whose output cannot be pasted into the next command wastes the
+        reader's time, and shortening the id without accepting it back is exactly that.
+
+        Args:
+            prefix: The start of a run id, or a whole one.
+
+        Returns:
+            The full run id.
+
+        Raises:
+            StoreError: If nothing matches, or more than one thing does. An ambiguous prefix
+                is never resolved by taking the first match: comparing the wrong run is a far
+                worse outcome than being asked to type four more characters.
+        """
+        if not prefix:
+            raise StoreError("run id cannot be empty")
+        rows = self._connection.execute(
+            "SELECT run_id FROM runs WHERE substr(run_id, 1, ?) = ? ORDER BY run_id",
+            (len(prefix), prefix),
+        ).fetchall()
+        if not rows:
+            raise StoreError(f"no such run: {prefix!r}")
+        if len(rows) > 1:
+            found = ", ".join(str(row["run_id"])[:12] for row in rows)
+            raise StoreError(f"run id {prefix!r} is ambiguous; it matches: {found}")
+        return str(rows[0]["run_id"])
+
     def list_runs(
         self, *, dataset_name: str | None = None, limit: int = 50
     ) -> tuple[RunRecord, ...]:

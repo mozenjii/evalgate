@@ -28,6 +28,9 @@ dependencies = [
   "typer>=0.15,<1",
 ]
 
+[project.scripts]
+evalgate = "evalgate.cli:main"
+
 [project.urls]
 Source = "https://github.com/mozenjii/evalgate"
 
@@ -58,7 +61,7 @@ packages = ["src/evalgate"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-src = ["src", "tests", "tools"]
+src = ["src", "tests", "tools", "examples"]
 
 [tool.ruff.lint]
 select = [
@@ -89,6 +92,8 @@ ignore = [
 "tests/**" = ["D100", "D103", "S101"]
 # The check runner's whole job is to print to a terminal and shell out.
 "tools/**" = ["T201", "S603"]
+# Example scripts are run by a person at a prompt and say what they did.
+"examples/**" = ["T201"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
@@ -97,7 +102,9 @@ convention = "google"
 # Types. Strict from the first commit: retrofitting strictness never happens.
 # ---------------------------------------------------------------------------
 [tool.pyright]
-include = ["src", "tests", "tools"]
+# Examples are included on purpose: they are the first code a reader copies, so they are
+# held to the same standard as the package rather than left as untyped sketches.
+include = ["src", "tests", "tools", "examples"]
 # Tests import the dev tools by name, exactly as pytest's pythonpath does.
 extraPaths = ["tools"]
 pythonVersion = "3.11"
@@ -128,7 +135,7 @@ reportUnknownVariableType = "none"
 # ---------------------------------------------------------------------------
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["tools"]
+pythonpath = ["tools", "examples/triage"]
 addopts = "-q --strict-markers --strict-config"
 xfail_strict = true
 
