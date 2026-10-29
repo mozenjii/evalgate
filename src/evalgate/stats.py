@@ -466,7 +466,7 @@ def _percentile(ordered: npt.NDArray[np.float64], fraction: float) -> float:
     if count == 1:
         return float(ordered[0])
     position = min(max(fraction, 0.0), 1.0) * (count - 1)
-    lower_index = int(math.floor(position))
+    lower_index = math.floor(position)
     upper_index = min(lower_index + 1, count - 1)
     lower = float(ordered[lower_index])
     upper = float(ordered[upper_index])
