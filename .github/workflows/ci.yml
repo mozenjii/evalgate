@@ -1,0 +1,83 @@
+# What this runs, and what it does not.
+#
+# It runs `tools/check.py`, the same command I run before committing: format, lint,
+# types, documentation links, and tests against a coverage floor. Nothing here is a
+# CI-only gate, and nothing I run locally is missing here. A check that exists in one
+# place and not the other gets out of sync within a month and then gets switched off.
+#
+# Not gated yet, so that the absence is a decision and not an oversight:
+#
+#   - Anything calling a model. No provider interface exists yet (B1), and when it
+#     does, CI will replay recorded calls rather than make live ones.
+#   - The statistics. The paired comparison and its independent oracle land in B1;
+#     until then there is no claim here about any number.
+#   - Redaction, the no-egress default and the budget cap (B2). CI handles no real
+#     data until those exist, which is why the datasets here are synthetic.
+#   - End-to-end gate behaviour on a pull request (B3).
+#   - Accessibility and performance budgets. They need a URL, and there is no UI.
+#
+# The matrix is the pinned interpreter plus the oldest version the package claims to
+# support, because `requires-python = ">=3.11"` is a promise and an untested promise
+# is a guess.
+
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.13.6"
+          enable-cache: true
+
+      - name: Install the locked environment
+        # --locked fails rather than silently resolving something new, so a drifting
+        # lockfile is a red build and not a surprise in someone else's checkout.
+        run: uv sync --all-groups --locked --python ${{ matrix.python-version }}
+
+      - name: Run the gates
+        run: uv run python tools/check.py
+
+  # A gate that has never failed is not known to work. This injects one deliberate fault
+  # per gate and requires each gate to catch it, then confirms the tree is green again.
+  # It runs on one interpreter because it is testing the gates, not the runtime.
+  gates-are-connected:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.13.6"
+          enable-cache: true
+
+      - name: Install the locked environment
+        run: uv sync --all-groups --locked --python 3.12
+
+      - name: Make every gate fail on purpose
+        run: uv run python tools/verify_gates.py

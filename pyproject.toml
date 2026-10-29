@@ -101,7 +101,12 @@ xfail_strict = true
 [tool.coverage.run]
 branch = true
 source = ["src/evalgate", "tools"]
-omit = ["tools/check.py"]
+# The two harness scripts are excluded on purpose, and the reason matters: both do
+# nothing but spawn a subprocess and read its exit code. Unit-testing them means
+# mocking subprocess, which tests the mock. They are verified by being run for real --
+# `check.py` on every CI build, `verify_gates.py` as its own CI job -- which is
+# stronger evidence than a coverage percentage. Their pure logic is still tested.
+omit = ["tools/check.py", "tools/verify_gates.py"]
 
 [tool.coverage.report]
 show_missing = true
