@@ -1,0 +1,110 @@
+[project]
+name = "evalgate"
+version = "0.0.0"
+description = "A CI check for LLM features: it fails a pull request when quality drops on a slice, and says whether the drop is real or noise."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Mozenjii" }]
+keywords = ["llm", "evaluation", "regression", "ci", "statistics"]
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development :: Quality Assurance",
+]
+dependencies = []
+
+[project.urls]
+Source = "https://github.com/mozenjii/evalgate"
+
+[dependency-groups]
+# Pinned on purpose. A toolchain that drifts turns a green check into an opinion.
+dev = [
+  "ruff==0.14.2",
+  "pyright==1.1.406",
+  "pytest==8.4.2",
+  "pytest-cov==7.0.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/evalgate"]
+
+# ---------------------------------------------------------------------------
+# Lint and format. One tool, so formatting can never disagree with linting.
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests", "tools"]
+
+[tool.ruff.lint]
+select = [
+  "E", "W",      # pycodestyle
+  "F",           # pyflakes
+  "I",           # import sorting
+  "N",           # naming
+  "UP",          # pyupgrade
+  "B",           # bugbear
+  "A",           # shadowed builtins
+  "C4",          # comprehensions
+  "SIM",         # simplify
+  "PTH",         # use pathlib
+  "RUF",         # ruff's own
+  "D",           # docstrings: every module and exported symbol carries one
+  "ANN",         # annotations required
+  "S",           # bandit security rules
+  "T20",         # no stray print() in library code
+]
+ignore = [
+  "D203",   # conflicts with D211; we keep D211 (no blank line before class docstring)
+  "D213",   # conflicts with D212; we keep D212 (summary on the first line)
+  "ANN401", # typing.Any is sometimes the honest annotation
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests document themselves by name, assert freely, and may use fixture data.
+"tests/**" = ["D100", "D103", "S101"]
+# The check runner's whole job is to print to a terminal and shell out.
+"tools/**" = ["T201", "S603"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+# ---------------------------------------------------------------------------
+# Types. Strict from the first commit: retrofitting strictness never happens.
+# ---------------------------------------------------------------------------
+[tool.pyright]
+include = ["src", "tests", "tools"]
+# Tests import the dev tools by name, exactly as pytest's pythonpath does.
+extraPaths = ["tools"]
+pythonVersion = "3.11"
+typeCheckingMode = "strict"
+reportMissingTypeStubs = "warning"
+venvPath = "."
+venv = ".venv"
+
+# ---------------------------------------------------------------------------
+# Tests and coverage.
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["tools"]
+addopts = "-q --strict-markers --strict-config"
+xfail_strict = true
+
+[tool.coverage.run]
+branch = true
+source = ["src/evalgate", "tools"]
+omit = ["tools/check.py"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+fail_under = 80
+exclude_lines = ["pragma: no cover", "if TYPE_CHECKING:", "raise NotImplementedError"]
