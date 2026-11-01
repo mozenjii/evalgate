@@ -4,7 +4,6 @@ version = "0.0.0"
 description = "A CI check for LLM features: it fails a pull request when quality drops on a slice, and says whether the drop is real or noise."
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "Apache-2.0" }
 authors = [{ name = "Mozenjii" }]
 keywords = ["llm", "evaluation", "regression", "ci", "statistics"]
 classifiers = [
