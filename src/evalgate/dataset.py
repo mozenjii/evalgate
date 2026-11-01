@@ -1,7 +1,5 @@
 """Versioned evaluation datasets: items, slices, provenance and a content hash.
 
-Owning artifact: `product context/00_PROJECT_BRIEF.md`, section 4.
-
 A dataset is a JSONL file of items plus a manifest beside it. JSONL because a dataset is
 reviewed in pull requests like any other source, and one item per line gives a readable diff
 when someone adds forty cases; a single JSON array re-indents the whole file instead.

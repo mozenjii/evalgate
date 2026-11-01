@@ -1,10 +1,10 @@
 """Check that every relative link in the repository's markdown actually resolves.
 
-Owning artifact: the B0 verification pipeline (`tools/check.py` runs this as one gate).
+`tools/check.py` runs this as one of its gates.
 
-The documentation here is a graph: the entry files point at the execution contract, the
-contract points at ADRs, ADRs point back. A renamed file silently breaks that graph, and
-nobody notices until someone follows a dead link while trying to understand a decision.
+Documentation is a graph: the README points at design notes, the notes point at each
+other and back. A renamed file silently breaks that graph, and nobody notices until
+someone follows a dead link while trying to understand a decision.
 
 Deliberate boundary: this checks *existence of link targets only*. It does not validate
 anchors within a file, and it never follows http(s) links -- a network call in a local
@@ -118,7 +118,7 @@ def _resolve(source: Path, target: str) -> Path:
     """Resolve a link target against the file that contains it.
 
     Percent-encoding is decoded first: the documentation links to real paths that contain
-    spaces, written as `app/technical%20context/...`, and those must resolve.
+    spaces, written as `design%20notes/...`, and those must resolve.
     """
     path_part = target.split("#", 1)[0]
     decoded = urllib.parse.unquote(path_part)

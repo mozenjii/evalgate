@@ -1,7 +1,5 @@
 """Command line for evalgate: run a dataset, list runs, compare two of them.
 
-Owning artifact: `product context/00_PROJECT_BRIEF.md`, section 4.
-
 Deliberate boundary: this module parses arguments, prints and chooses an exit code. Every
 decision it reports was made in `compare`, and every number in `stats`. Keeping it that thin
 means the verdict a person reads here is the same object a test can assert on.

@@ -1,7 +1,5 @@
 """Durable run records: what a version produced, what it cost, and how it scored.
 
-Owning artifact: `product context/00_PROJECT_BRIEF.md`, section 4.
-
 SQLite rather than more JSONL. Datasets are read by people in diffs, but runs are read by
 queries -- every score for one scorer across two runs, paired by item -- and that is what a
 relational store is for. It is also a single file with no server, which keeps a check

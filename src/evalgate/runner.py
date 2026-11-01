@@ -1,7 +1,5 @@
 """Run a dataset against a target and record what happened.
 
-Owning artifact: `product context/00_PROJECT_BRIEF.md`, section 4.
-
 The runner is deliberately thin. It walks items in order, calls the target, times the call,
 scores the output and writes a row. Everything interesting -- what counts as worse, which
 slice regressed -- happens elsewhere, on the recorded rows, where it can be re-examined

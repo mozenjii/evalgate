@@ -1,11 +1,12 @@
 """evalgate: a CI check that fails a pull request when an LLM feature gets worse.
 
-The package is deliberately empty at this stage. B0 delivers the workspace and the
-verification pipeline; the first product modules (dataset loading, the runner, scorers
-and the paired statistics) arrive in B1, each behind its own tests.
+Modules, from the bottom up: `dataset` loads and validates versioned datasets, `scorers`
+turns one output into one number, `stats` holds the paired statistics, `runs` stores run
+records, `runner` executes a dataset against a target, `compare` turns two runs into
+per-slice verdicts, and `cli` is the `evalgate` command.
 
-Keeping the public surface to a version string until then means the import graph never
-grows a module that nothing checks.
+The package root exports only the version; import from the module you need. Keeping the
+root that small means nothing reaches the public surface without a test behind it.
 """
 
 __all__ = ["__version__"]

@@ -1,7 +1,7 @@
 """Command-line front end for the doc-link gate.
 
-Owning artifact: the B0 verification pipeline. The checking logic lives in `doc_links`
-so it can be unit-tested without spawning a process; this file is only the shell around it.
+The checking logic lives in `doc_links` so it can be unit-tested without spawning a
+process; this file is only the shell around it.
 """
 
 from __future__ import annotations

@@ -121,8 +121,8 @@ venv = ".venv"
 # incomplete third-party stubs rather than on anything a test author controls: pytest ships
 # `approx` with an untyped `expected`, and scipy and statsmodels ship no types at all -- which
 # is unavoidable here, because those two ARE the independent oracle. The alternative was a
-# suppression comment on every line that touches them, which `app/CONSTRAINTS.md` forbids
-# accumulating and which would hide real findings.
+# suppression comment on every line that touches them, which this project does not allow
+# to accumulate, and which would hide real findings.
 #
 # What stays on under tests: reportArgumentType, reportGeneralTypeIssues, reportCallIssue and
 # the rest of strict mode. Those are the rules that catch a wrong type written by hand, and one

@@ -1,8 +1,5 @@
 """Prove every gate is connected by making each one fail on purpose.
 
-Owning artifact: `app/CONSTRAINTS.md` ("Watch each gate fail once on a deliberate bad
-input, so you know it is connected").
-
 A gate that has never failed is not known to work. A misconfigured path, a tool that
 exits zero when it finds nothing, an include list that quietly matches no files: each
 produces a green check that means nothing, and the longer it stays green the more it is

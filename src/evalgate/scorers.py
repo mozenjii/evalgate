@@ -1,7 +1,5 @@
 """Deterministic scorers: the checks that run before any model is asked for an opinion.
 
-Owning artifact: `product context/00_PROJECT_BRIEF.md`, section 3.
-
 A scorer turns one item's output into one number. Each declares whether it is binary or
 continuous, because that choice decides which paired test the gate runs: binary outcomes get
 the exact conditional interval, continuous ones get the bootstrap. Getting it wrong would not

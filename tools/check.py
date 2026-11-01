@@ -1,12 +1,11 @@
 """Run every cheap quality gate, in order, and report which ones failed.
 
-Owning artifact: `app/CONSTRAINTS.md` ("Enforced with numbers"). This script is that
-table made executable, and `.github/workflows/ci.yml` runs this same script, so a gate
-cannot pass locally and be absent in CI.
+This is the project's quality bar made executable, and `.github/workflows/ci.yml` runs this
+same script, so a gate cannot pass locally and be absent in CI.
 
 Deliberate boundary: only gates that are fast and need no network live here. Anything
-needing a model call, a browser or real data belongs to a later slice and gets its own
-command, because a check that takes minutes stops being run before a commit.
+needing a model call, a browser or real data gets its own command, because a check that
+takes minutes stops being run before a commit.
 
 Usage:
     uv run python tools/check.py            # run everything, report at the end

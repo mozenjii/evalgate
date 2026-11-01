@@ -38,9 +38,9 @@ def test_resolves_relative_to_the_containing_file_not_the_root(tmp_path: Path) -
 
 
 def test_decodes_percent_encoded_spaces(tmp_path: Path) -> None:
-    # The engineering docs live in a directory with a space in its name.
-    write(tmp_path, "entry.md", "Read [the contract](technical%20context/01_CONTRACT.md).")
-    write(tmp_path, "technical context/01_CONTRACT.md", "# Contract")
+    # Real repositories have directories with spaces in their names.
+    write(tmp_path, "index.md", "Read [the notes](design%20notes/01_overview.md).")
+    write(tmp_path, "design notes/01_overview.md", "# Overview")
 
     assert find_broken_links(tmp_path) == []
 
@@ -97,7 +97,7 @@ def test_parse_links_reports_one_based_line_numbers() -> None:
 
 def test_broken_link_renders_as_an_editor_jump_target() -> None:
     link = BrokenLink(
-        source=Path("app/entry.md"), line=12, target="gone.md", resolved=Path("app/gone.md")
+        source=Path("docs/entry.md"), line=12, target="gone.md", resolved=Path("docs/gone.md")
     )
 
-    assert str(link) == "app/entry.md:12: gone.md -> app/gone.md"
+    assert str(link) == "docs/entry.md:12: gone.md -> docs/gone.md"
