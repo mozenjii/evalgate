@@ -1,7 +1,6 @@
 """Turn two recorded runs into a per-slice verdict.
 
-Owning artifact: `app/technical context/02_STATISTICS_CONTRACT.md` for the mathematics, and
-`product context/00_PROJECT_BRIEF.md` section 4 for where this sits.
+Owning artifact: `docs/statistics.md` for the mathematics.
 
 This is the join between the stored runs and the statistics: pair two runs by item within a
 slice, pick the paired test the scorer's kind calls for, and read the interval against that

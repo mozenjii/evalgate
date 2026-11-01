@@ -1,7 +1,7 @@
 """Paired statistics for the non-inferiority gate.
 
-Owning artifact: `app/technical context/02_STATISTICS_CONTRACT.md`. That document states the
-mathematics; this module implements it. Where the two disagree, the contract is right.
+Owning artifact: `docs/statistics.md`. That document states the mathematics; this module
+implements it. Where the two disagree, the document is right.
 
 The gate asks "is the candidate at most `delta` worse than the baseline", not "is it different".
 A significance test on a forty-item slice passes almost everything, so its greenness means

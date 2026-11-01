@@ -1,7 +1,7 @@
 """Independent oracle for `evalgate.stats`, checked against scipy and statsmodels.
 
-Owning artifact: `app/technical context/02_STATISTICS_CONTRACT.md`. Section numbers in
-the comments below refer to that document.
+Owning artifact: `docs/statistics.md`. Section numbers in the comments below refer to
+that document.
 
 Every expectation here was authored from the contract and from scipy/statsmodels only.
 Nothing in this file was written while reading `src/evalgate/stats.py`, which is the
