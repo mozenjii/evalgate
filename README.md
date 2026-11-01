@@ -1,20 +1,19 @@
 # evalgate
 
-A CI check for LLM features. It fails a pull request when quality drops on any slice of your data, and tells you whether the drop is real or just noise.
-
-> **Status:** early, but it runs. Datasets, scorers, the paired statistics, run records and the
-> `run` / `compare` commands work end to end on the example below. There is no LLM judge yet and
-> nothing is released. The results table stays empty until a script in this repo produces the
-> numbers.
+A CI check for LLM features. It fails a pull request when quality drops on any slice of your data,
+and tells you whether the drop is real or just noise.
 
 ## The problem
 
-When you change a prompt, swap a model or tweak a retriever, a handful of spot checks usually look fine. Meanwhile some other part of your traffic gets worse and nothing in CI notices, because model output isn't deterministic and "the tests pass" doesn't mean much for free text. Teams end up shipping on gut feeling and finding the regressions from user complaints.
+When you change a prompt, swap a model or tweak a retriever, a handful of spot checks usually look
+fine. Meanwhile some other part of your traffic gets worse and nothing in CI notices, because model
+output isn't deterministic and "the tests pass" doesn't mean much for free text. Teams end up
+shipping on gut feeling and finding the regressions from user complaints.
 
 ## Try it
 
 The repository ships a 120-item synthetic triage set and a keyword classifier in two versions. The
-second has two warranty cues removed, so it is worse on the warranty slice and identical everywhere
+second has two warranty cues removed, so it's worse on the warranty slice and identical everywhere
 else. No model is involved, so this runs instantly and identically on any machine.
 
 ```bash
@@ -34,45 +33,71 @@ intent=warranty            40   -0.600 (-0.600 to -0.429)  regressed
 ```
 
 It finds the regression in the slice that has it. Look at the other two lines though: nothing
-changed in billing or refunds, and it still will not call them a pass. Forty items with zero
-disagreements cannot rule out a five-point drop, so it says so. Most tools would print three green
+changed in billing or refunds, and it still won't call them a pass. Forty items with zero
+disagreements can't rule out a five-point drop, so it says so. Most tools would print three green
 ticks there, and two of them would mean nothing.
 
-That is the whole idea. Exit code 1 means something regressed, 2 means the data could not answer,
-and 0 means it could and nothing did.
+That's the whole idea. Exit code 1 means something regressed, 2 means the data couldn't answer, and
+0 means it could and nothing did. Inconclusive gets its own exit code because sharing one with
+success is exactly how an underpowered slice becomes a green tick.
 
-## What it does
+## What's built
 
-- Versioned datasets where every item records where it came from — hand-written, mined from logs,
-  synthetic, or promoted from a production failure — and which slice it belongs to. Both are
-  required; an item that declares neither is refused rather than filed under "unknown".
-- Deterministic scorers first: exact match, regex, JSON schema, set F1, edit similarity, or your own
-  function. Each declares whether it is binary or continuous, because that picks the statistical
-  test and guessing it is silently wrong.
-- Paired comparison per slice. Binary scorers get an exact conditional interval, continuous ones a
-  BCa bootstrap. Never two independent means.
-- Non-inferiority, not significance: "is this at most `delta` worse", answered from the lower bound
-  of an interval. A significance test on a forty-item slice passes almost everything.
+- **Versioned datasets.** JSONL plus a manifest, with a content hash over the items so an edit that
+  nobody meant to make is caught rather than silently changing what a run means. Every item records
+  where it came from — hand-written, mined from logs, synthetic, or promoted from a production
+  failure — and which slice it's in. Both are required; an item that declares neither is refused
+  rather than filed under "unknown".
+- **Deterministic scorers.** Exact match, regex, JSON schema, set F1, edit similarity, or your own
+  function. Each declares whether it's binary or continuous, because that picks the statistical test
+  and inferring it from the values is silently wrong on a slice where everything passed.
+- **Paired statistics.** Binary scorers get an exact conditional interval — Clopper-Pearson over the
+  discordant pairs, since only disagreements carry information about a difference. Continuous ones
+  get a BCa bootstrap over the paired differences. Never two independent means.
+- **Non-inferiority, not significance.** The gate asks "is this at most δ worse?" and reads the lower
+  bound of the interval. A significance test on a forty-item slice passes almost everything, which is
+  how a green check comes to mean nothing. δ is per slice and is a person's judgement, recorded next
+  to the verdict.
+- **Run records.** SQLite, with output, latency, tokens and cost per item. Pairing two runs names the
+  items only one of them scored instead of quietly intersecting, because the item count is what you
+  use to judge whether a verdict means anything.
+- **A CLI and CI workflow** that turn all of that into an exit code.
 
-## Not yet
+## Not built yet
 
-An LLM judge and its calibration against human labels, log mining, promoting a failure to a
-permanent case, the pull-request comment, and the seeded-regression benchmark that measures the
-gate's own detection and false-alarm rates.
+The LLM judge and its calibration against human labels, record-and-replay for model calls, log
+mining, promoting a production failure to a permanent case, the pull-request comment, and the
+seeded-regression benchmark that measures the gate's own detection and false-alarm rates.
 
-## How I will know it works
+## How I know the statistics are right
 
-A tool that judges other tools needs its own evaluation, and I would rather show that than assert it.
+A tool that judges other tools needs its own evaluation, and I'd rather show that than assert it.
 
-The statistics are checked by an oracle written from a written contract and from scipy and
-statsmodels, with no sight of the implementation it judges: 820 cases covering the exact binomial
-intervals, McNemar, Holm and Benjamini-Hochberg, the jackknife acceleration and the BCa bootstrap.
-`src/evalgate/stats.py` imports neither scipy nor statsmodels, and one of the oracle's tests parses
-the module to enforce that — otherwise "it agrees with scipy" would be a statement about nothing.
-The gates have each been watched failing on purpose, which `tools/verify_gates.py` re-checks.
+I wrote the mathematics down first, in [docs/statistics.md](docs/statistics.md). Then the
+statistics are checked against scipy and statsmodels by an oracle written from that document alone,
+with no sight of the implementation it judges: 820 cases covering the exact binomial intervals, McNemar, Holm and Benjamini-Hochberg, the
+jackknife acceleration and the BCa bootstrap. `src/evalgate/stats.py` imports neither scipy nor
+statsmodels — one of the oracle's own tests parses the module to enforce it — because otherwise
+"it agrees with scipy" would be a statement about nothing. That's why the exact binomial tails and
+the Clopper-Pearson inversion are written out here instead of imported.
 
-Still to come: inject regressions of known size into a demo feature and measure how often the gate
-catches them, and how often it fires on reruns of unchanged code.
+A passing oracle proves nothing on its own, so I checked it can fail: flipping the sign of the
+binary point estimate breaks it, and restoring the sign fixes it.
+
+It caught three real defects in my first implementation. The bootstrap drew a fresh random stream
+when no seed was given, so two runs of the same commit could reach different verdicts — on the
+default path, which is the exact failure a CI gate exists to prevent. The bias correction counted
+resample means strictly below the observed mean, which is fine on continuous data and systematically
+wrong once scores take few distinct values. And my own contract contradicted itself about the
+zero-discordance bound.
+
+The same discipline applies to the build gates: format, lint, types, documentation links and tests
+behind one command, each one watched failing on purpose, which `tools/verify_gates.py` re-checks so
+it can't rot.
+
+## Results
+
+Nothing goes in this table until a committed script in this repo produces it.
 
 | Measurement | How | Result |
 |---|---|---|
@@ -83,18 +108,27 @@ catches them, and how often it fires on reruns of unchanged code.
 
 ## Design notes
 
-**Non-inferiority, not significance.** The question a gate should ask is "is the new version at most δ worse?", not "is there a statistically significant difference?". On small slices the second question lets almost everything through. The gate will compare the lower bound of a paired confidence interval against a tolerance set per slice.
+**Say when a slice can't be tested.** A slice of 25 items can't detect a five-point drop however you
+test it. Thin slices show up as a coverage gap rather than a green tick, and that's load-bearing
+rather than tasteful: the verdict function sees an interval and never the item count, so if a slice
+with zero disagreements reported a zero-width interval it would pass by arithmetic instead of by
+evidence.
 
-**Say when a slice can't be tested.** A slice of 25 items can't detect a five point drop however you test it. evalgate will report the smallest regression each slice could have caught, so thin slices show up as a coverage gap instead of a green tick.
+**Don't trust the judge until it's calibrated.** Judges drift towards longer answers, first positions
+and their own model family. I'll measure agreement per rubric and run position-swap and length
+probes. Where a cheap judge scores a large set and humans label a small one, prediction-powered
+inference can correct the judge's bias and still give honest intervals.
 
-**Don't trust the judge until it's calibrated.** Judges drift towards longer answers, first positions and their own model family. I'll measure agreement per rubric and run position-swap and length probes. Where a cheap judge scores a large set and humans label a small one, prediction-powered inference can correct the judge's bias and still give honest intervals.
-
-**Record and replay model calls.** Replayed runs make CI cheap and reproducible. Live reruns are what measure the noise floor.
+**Record and replay model calls.** Replayed runs make CI cheap and reproducible. Live reruns are what
+measure the noise floor.
 
 ## Roadmap
 
-- [ ] Dataset format and run records
-- [ ] Deterministic scorers and the paired comparison
+- [x] Dataset format, slices and provenance
+- [x] Run records
+- [x] Deterministic scorers
+- [x] Paired comparison, non-inferiority verdicts and the CLI
+- [ ] Redaction, a no-egress default for tests, and a budget cap on model calls
 - [ ] LLM judge with human calibration
 - [ ] GitHub Action and pull request comment
 - [ ] Failure-to-case promotion and log mining
@@ -102,20 +136,20 @@ catches them, and how often it fires on reruns of unchanged code.
 
 ## Development
 
-Requires [uv](https://docs.astral.sh/uv/). The interpreter and every tool version are
-pinned, so a fresh checkout runs the same toolchain I do.
+Requires [uv](https://docs.astral.sh/uv/). The interpreter and every tool version are pinned, so a
+fresh checkout runs the same toolchain I do.
 
 ```bash
 uv sync --all-groups
 uv run python tools/check.py
 ```
 
-That one command runs every gate: formatting, lint, types, documentation links, and
-tests against a coverage floor. It is exactly what CI runs. Pass a gate name to run one
-of them while you work, for example `uv run python tools/check.py types`.
+That one command runs every gate: formatting, lint, types, documentation links, and tests against a
+coverage floor. It's exactly what CI runs, so a gate can't exist in one place and be missing from the
+other. Pass a gate name to run one while you work, for example `uv run python tools/check.py types`.
 
-A gate that has never failed is not known to work, so there is a second command that
-makes each one fail on purpose and requires it to notice:
+A gate that has never failed isn't known to work, so there's a second command that makes each one
+fail on purpose and requires it to notice:
 
 ```bash
 uv run python tools/verify_gates.py
@@ -132,5 +166,3 @@ Part of a set of six projects about building LLM systems you can trust:
 [tollgate](https://github.com/mozenjii/tollgate),
 [redline](https://github.com/mozenjii/redline),
 [casefile](https://github.com/mozenjii/casefile).
-
-Built by Mohib Ahmad.
