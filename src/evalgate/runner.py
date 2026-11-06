@@ -1,113 +1,125 @@
-"""Run a dataset against a target and record what happened.
+"""Produce results: run each item of a dataset through a target and record what came back.
 
-The runner is deliberately thin. It walks items in order, calls the target, times the call,
-scores the output and writes a row. Everything interesting -- what counts as worse, which
-slice regressed -- happens elsewhere, on the recorded rows, where it can be re-examined
-without paying for the run again.
+The runner is the convenient way to make a results file, not the only one. It calls a Python
+function once per item, times it, and records the output with a hash of the input it answered.
+It does not score anything: scoring happens at comparison time, against the dataset as it
+stands then, so a results file stays valid when a scorer is added or fixed.
 
-Deliberate boundary: two kinds of failure are treated differently, because they are different.
-A target that raises on one item is an operational failure: it is recorded against that item
-and the run continues, since a model timing out on item 40 of 400 is normal and losing the
-other 399 would be worse. A scorer that raises is a configuration failure: the scorer and the
-dataset disagree about what an item looks like, that is true of every item, and continuing
-would produce a run whose scores mean nothing.
+Deliberate boundary: a target that raises on one item is recorded against that item and the run
+continues. A model timing out on item 40 of 400 is ordinary, and losing the other 399 would be
+the larger failure. The comparison counts such an item as a failure, not as missing.
 """
 
 from __future__ import annotations
 
+import importlib
+import sys
 import time
 from collections.abc import Callable, Sequence
+from pathlib import Path
+from typing import cast
 
 from pydantic import JsonValue
 
 from evalgate.dataset import Dataset, Item
-from evalgate.runs import ItemOutcome, RunRecord, RunStore
-from evalgate.scorers import Scorer, score_all
+from evalgate.results import ItemResult, input_digest
 
-__all__ = ["Target", "run_dataset"]
+__all__ = ["Target", "TargetError", "load_target", "run_dataset"]
 
 Target = Callable[[JsonValue], JsonValue]
 """What is under test: anything that turns an item's input into an output.
 
-A plain callable rather than a class, so a prompt, an HTTP client or a shell command can all
+A plain callable rather than a class, so a prompt, an HTTP client or a shell command can each
 be adapted to it in a few lines without inheriting anything from this package.
 """
 
 
-def run_dataset(
-    dataset: Dataset,
-    target: Target,
-    scorers: Sequence[Scorer],
-    store: RunStore,
-    *,
-    label: str,
-    run_id: str | None = None,
-    notes: str | None = None,
-    on_item: Callable[[int, Item], None] | None = None,
-) -> RunRecord:
-    """Run every item through the target, score it, and record the result.
+class TargetError(Exception):
+    """A target reference could not be turned into something callable."""
+
+
+def load_target(reference: str, pythonpath: Sequence[Path] = ()) -> Target:
+    """Import a target from a `module:function` reference.
+
+    The directories in `pythonpath` are put at the front of the import path and left there for
+    the life of the process, so a target that imports its own helpers lazily, inside the
+    function, still finds them. That trust is the same a test runner extends to the tests it
+    collects: the reference comes from the person running the command or their checked-in
+    configuration, never from a dataset or a results file.
 
     Args:
-        dataset: The dataset to run. Its name, version and content hash are recorded with the
-            run, so a later edit to the items is detectable from the run alone.
-        target: What is being tested.
-        scorers: Deterministic scorers to apply to every item.
-        store: Where to write the run.
-        label: What to call this version in reports -- a prompt version, a model, a commit.
-        run_id: Identifier, generated when omitted.
-        notes: Optional free text stored with the run.
-        on_item: Called with `(index, item)` before each item, for progress reporting. Kept as
-            a callback so this module never decides how output should look.
+        reference: `module:function`, for example `myapp.triage:classify`.
+        pythonpath: Directories to search first.
 
     Returns:
-        The run's record, already marked finished.
+        The callable.
 
     Raises:
-        ScorerError: If a scorer cannot be applied. The run is left unfinished in the store,
-            which is how a reader tells it apart from one that completed.
-        StoreError: If the run cannot be written.
+        TargetError: If the reference is malformed, the module cannot be imported, or the
+            attribute is missing or not callable.
     """
-    record = store.start_run(
-        dataset_name=dataset.manifest.name,
-        dataset_version=dataset.manifest.version,
-        dataset_sha256=dataset.manifest.content_sha256,
-        target=label,
-        run_id=run_id,
-        notes=notes,
-    )
+    module_name, separator, attribute = reference.partition(":")
+    if not separator or not module_name or not attribute:
+        raise TargetError(f"target must look like 'module:function', got {reference!r}")
 
+    for directory in reversed(pythonpath):
+        entry = str(directory)
+        if entry not in sys.path:
+            sys.path.insert(0, entry)
+
+    try:
+        module = importlib.import_module(module_name)
+    except ImportError as error:
+        raise TargetError(f"cannot import {module_name!r}: {error}") from error
+
+    found: object = module
+    for part in attribute.split("."):
+        if not hasattr(found, part):
+            raise TargetError(f"{module_name!r} has no attribute {attribute!r}")
+        found = getattr(found, part)
+    if not callable(found):
+        raise TargetError(f"{reference!r} is not callable")
+    return cast("Target", found)
+
+
+def run_dataset(
+    dataset: Dataset, target: Target, *, on_item: Callable[[int, Item], None] | None = None
+) -> tuple[ItemResult, ...]:
+    """Call the target once per item, in dataset order.
+
+    Args:
+        dataset: The items to run.
+        target: What is being tested.
+        on_item: Called with `(index, item)` before each call, for progress. A callback, so this
+            module never decides how output should look.
+
+    Returns:
+        One result per item, each carrying the hash of the input it answered.
+    """
+    produced: list[ItemResult] = []
     for index, item in enumerate(dataset):
         if on_item is not None:
             on_item(index, item)
-        store.record(record.run_id, _run_one(item, target, scorers))
-
-    store.finish_run(record.run_id)
-    return store.get_run(record.run_id)
+        produced.append(_run_one(item, target))
+    return tuple(produced)
 
 
-def _run_one(item: Item, target: Target, scorers: Sequence[Scorer]) -> ItemOutcome:
-    """Call the target for one item and score what came back.
-
-    A target that raises is recorded as an error on that item rather than ending the run: a
-    model failing on one item out of four hundred is ordinary, and discarding the other three
-    hundred and ninety-nine would be the larger loss. A scorer that raises is left to
-    propagate, because it means the scorer cannot read this dataset at all.
-    """
+def _run_one(item: Item, target: Target) -> ItemResult:
+    """Call the target for one item, recording an error instead of raising it."""
+    digest = input_digest(item.input)
     started = time.perf_counter()
     try:
         output = target(item.input)
     except Exception as error:
-        return ItemOutcome(
-            item_id=item.id,
-            output=None,
+        return ItemResult(
+            id=item.id,
             error=f"{type(error).__name__}: {error}",
+            input_sha256=digest,
             latency_ms=(time.perf_counter() - started) * 1000.0,
         )
-
-    latency_ms = (time.perf_counter() - started) * 1000.0
-    return ItemOutcome(
-        item_id=item.id,
+    return ItemResult(
+        id=item.id,
         output=output,
-        latency_ms=latency_ms,
-        scores=score_all(scorers, output, item.expected),
+        input_sha256=digest,
+        latency_ms=(time.perf_counter() - started) * 1000.0,
     )

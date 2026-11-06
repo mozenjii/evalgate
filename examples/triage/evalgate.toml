@@ -1,0 +1,35 @@
+# The triage example. From the repository root:
+#
+#   uv run evalgate run --config examples/triage/evalgate.toml --label v1 --out v1.jsonl
+#   uv run evalgate run --config examples/triage/evalgate.toml --label v2 --out v2.jsonl \
+#       --target target:classify_v2
+#   uv run evalgate compare v1.jsonl v2.jsonl --config examples/triage/evalgate.toml
+#
+# Paths below are relative to this file.
+
+[dataset]
+manifest = "manifest.json"
+
+[target]
+callable = "target:classify_v1"
+pythonpath = ["."]
+
+[[scorer]]
+type = "exact_match"
+
+# Intent slices can fail the build. A tolerance is a judgement about a slice: five points
+# here, which forty items per intent cannot certify -- so an unchanged run reports these
+# slices as not guarded rather than pretending they passed.
+[[gate]]
+scorer = "exact_match"
+slices = ["intent=*"]
+tolerance = 0.05
+
+# Length slices are reported but never fail the build.
+[[watch]]
+scorer = "exact_match"
+slices = ["length=*"]
+tolerance = 0.05
+
+[policy]
+on_inconclusive = "warn"

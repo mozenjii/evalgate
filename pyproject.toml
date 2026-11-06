@@ -138,7 +138,7 @@ reportUnknownVariableType = "none"
 # ---------------------------------------------------------------------------
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["tools", "examples/triage"]
+pythonpath = ["tools"]
 addopts = "-q --strict-markers --strict-config"
 xfail_strict = true
 
