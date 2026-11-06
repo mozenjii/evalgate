@@ -25,6 +25,8 @@ METHOD_URL = "https://github.com/mozenjii/evalgate/blob/main/docs/statistics.md"
 
 _SEVERITY = {Verdict.REGRESSED: 0, Verdict.INCONCLUSIVE: 1, Verdict.NON_INFERIOR: 2}
 
+_ASCII = str.maketrans({"·": "/", "—": "-"})
+
 Policy = Literal["warn", "fail"]
 
 
@@ -73,7 +75,9 @@ def render_text(comparison: Comparison, *, confidence: float, on_inconclusive: P
     lines += [
         f"  - {note}" for note in _notes(comparison, confidence, on_inconclusive, markdown=False)
     ]
-    return "\n".join(lines) + "\n"
+    # Plain ASCII for terminals: a Windows console in its default code page prints the middle
+    # dot and the em dash as replacement characters. The markdown version keeps them.
+    return ("\n".join(lines) + "\n").translate(_ASCII)
 
 
 # --------------------------------------------------------------------------- shared wording

@@ -222,3 +222,13 @@ def test_the_terminal_version_has_no_markdown() -> None:
     assert "**" not in text
     assert "](" not in text
     assert "intent=warranty" in text
+
+
+def test_the_terminal_version_is_plain_ascii() -> None:
+    # A Windows console in its default code page cannot print the markdown's punctuation.
+    text = render_text(
+        comparison(FINE, UNGUARDED, REGRESSED), confidence=0.95, on_inconclusive="warn"
+    )
+
+    text.encode("ascii")
+    assert "1 regressed / 1 not guarded / 1 ok" in text
