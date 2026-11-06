@@ -424,12 +424,17 @@ def test_different_data_gets_a_different_resample_stream() -> None:
 
 
 def test_ties_in_the_resample_distribution_count_as_half() -> None:
-    # Differences taking few distinct values make exact ties common. Counting only the strictly
-    # smaller resample means would bias the correction downwards on every such slice.
+    # Differences taking few distinct values make exact ties common: here every resample mean is
+    # a multiple of 1/40, and about one in eight lands exactly on the observed mean. The data are
+    # symmetric and so is the acceleration, so counting ties as half leaves the interval centred.
+    # Counting only the strictly smaller means pushes the bias correction down and slides the
+    # whole interval a full grid step (0.025) lower -- an asymmetry of 0.05, measured over twenty
+    # seeds. Half a grid step separates the two with room on both sides.
     baseline = [0.0] * 40
     candidate = [0.0 if index % 2 else 1.0 for index in range(40)]
 
-    result = paired_continuous(baseline, candidate, seed=7, resamples=4_000)
+    interval = paired_continuous(baseline, candidate, seed=7, resamples=20_000).interval
 
-    assert result.interval.low < result.interval.point < result.interval.high
-    assert result.interval.low >= 0.0 and result.interval.high <= 1.0
+    above = interval.high - interval.point
+    below = interval.point - interval.low
+    assert abs(above - below) < 0.0125
