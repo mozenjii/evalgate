@@ -11,7 +11,8 @@
 #     CI will replay recorded calls rather than make live ones.
 #   - Redaction, a no-egress default and a budget cap on model calls. CI handles no
 #     real data until those exist, which is why the datasets here are synthetic.
-#   - End-to-end gate behaviour on a pull request.
+#   - The pull-request comment. The action job below runs the whole check on every push,
+#     but with comments off: a push has no pull request to comment on.
 #   - Accessibility and performance budgets. They need a URL, and there is no UI.
 #
 # The matrix is the pinned interpreter plus the oldest version the package claims to
@@ -108,3 +109,39 @@ jobs:
 
       - name: Audit dependencies for known vulnerabilities
         run: uv run pip-audit --strict --no-deps -r requirements-audit.txt
+
+  # Runs this repository's own action against the example, the way a user's workflow would:
+  # installed from source into a plain Python, base and head checked out separately. The
+  # example is unchanged between the two, so the verdict is "not guarded" under a warn policy
+  # and the step exits 0. The second step then checks the installed command still catches the
+  # example's seeded regression.
+  action:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run the action against this commit
+        uses: ./
+        with:
+          config: examples/triage/evalgate.toml
+          base-ref: ${{ github.sha }}
+          comment: "false"
+
+      - name: The installed command finds the seeded regression
+        run: |
+          config=examples/triage/evalgate.toml
+          python -m evalgate.cli run --config "$config" --label v1 --out v1.jsonl --quiet
+          python -m evalgate.cli run --config "$config" --label v2 --out v2.jsonl --quiet \
+            --target target:classify_v2
+          set +e
+          python -m evalgate.cli compare v1.jsonl v2.jsonl --config "$config"
+          code=$?
+          if [ "$code" -ne 1 ]; then
+            echo "::error::expected exit 1 (regressed), got $code"
+            exit 1
+          fi

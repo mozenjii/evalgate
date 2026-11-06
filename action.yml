@@ -1,0 +1,133 @@
+# evalgate as a pull-request check.
+#
+# It produces results for the pull request's base commit and for the commit under test, compares
+# them slice by slice, writes the report to the job summary, posts or updates one comment on the
+# pull request, and exits with the verdict.
+#
+# It installs evalgate into the Python your workflow already set up, rather than an isolated
+# environment of its own: your target runs inside evalgate's process, so it needs your project's
+# dependencies alongside it. Set up Python 3.11 or newer and install your project first.
+#
+# Every input reaches the shell through an environment variable, never by direct interpolation,
+# so a crafted branch name or input cannot inject commands.
+
+name: evalgate
+description: Fail a pull request when an LLM feature gets worse on any slice of your data.
+branding:
+  icon: check-circle
+  color: blue
+
+inputs:
+  config:
+    description: Path to evalgate.toml, relative to the repository root.
+    default: evalgate.toml
+  base-ref:
+    description: >-
+      Branch name or full commit SHA to compare against. Defaults to the pull request's base
+      commit.
+    default: ""
+  python:
+    description: Python executable to install evalgate into and run it with.
+    default: python
+  comment:
+    description: Post or update a comment on the pull request ("true" or "false").
+    default: "true"
+
+outputs:
+  exit-code:
+    description: "0 ok, 1 regressed, 2 not guarded under a fail policy, 3 could not run."
+    value: ${{ steps.compare.outputs.exit-code }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install evalgate
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        PYTHON: ${{ inputs.python }}
+      run: |
+        "$PYTHON" -c 'import sys; sys.exit(sys.version_info < (3, 11))' \
+          || { echo "::error::evalgate needs Python 3.11 or newer (got $("$PYTHON" --version))"; exit 3; }
+        "$PYTHON" -m pip install --quiet --disable-pip-version-check "$ACTION_PATH"
+
+    - name: Produce results for the base commit
+      id: base
+      shell: bash
+      env:
+        BASE_REF: ${{ inputs.base-ref || github.event.pull_request.base.sha }}
+        EVALGATE_CONFIG: ${{ inputs.config }}
+        PYTHON: ${{ inputs.python }}
+      run: |
+        if [ -z "$BASE_REF" ]; then
+          echo "::error::no base commit: set base-ref, or run on a pull_request event"
+          exit 3
+        fi
+        # FETCH_HEAD rather than the ref itself, so a branch name works as well as a full SHA.
+        git fetch --no-tags --depth=1 origin "$BASE_REF"
+        git worktree add --detach "$RUNNER_TEMP/evalgate-base" FETCH_HEAD
+        if [ ! -f "$RUNNER_TEMP/evalgate-base/$EVALGATE_CONFIG" ]; then
+          # The pull request that introduces evalgate has nothing to compare against yet.
+          echo "::notice::the base commit has no $EVALGATE_CONFIG; nothing to compare"
+          echo "skip=true" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        cd "$RUNNER_TEMP/evalgate-base"
+        "$PYTHON" -m evalgate.cli run --config "$EVALGATE_CONFIG" --label base \
+          --out "$RUNNER_TEMP/evalgate-base.jsonl" --quiet
+
+    - name: Produce results for this commit
+      if: steps.base.outputs.skip != 'true'
+      shell: bash
+      env:
+        EVALGATE_CONFIG: ${{ inputs.config }}
+        PYTHON: ${{ inputs.python }}
+      run: |
+        "$PYTHON" -m evalgate.cli run --config "$EVALGATE_CONFIG" --label head \
+          --out "$RUNNER_TEMP/evalgate-head.jsonl" --quiet
+
+    - name: Compare
+      id: compare
+      if: steps.base.outputs.skip != 'true'
+      shell: bash
+      env:
+        EVALGATE_CONFIG: ${{ inputs.config }}
+        PYTHON: ${{ inputs.python }}
+      run: |
+        set +e
+        "$PYTHON" -m evalgate.cli compare \
+          "$RUNNER_TEMP/evalgate-base.jsonl" "$RUNNER_TEMP/evalgate-head.jsonl" \
+          --config "$EVALGATE_CONFIG" --markdown "$RUNNER_TEMP/evalgate-report.md"
+        code=$?
+        echo "exit-code=$code" >> "$GITHUB_OUTPUT"
+        if [ -f "$RUNNER_TEMP/evalgate-report.md" ]; then
+          cat "$RUNNER_TEMP/evalgate-report.md" >> "$GITHUB_STEP_SUMMARY"
+        fi
+
+    - name: Comment on the pull request
+      if: >-
+        steps.base.outputs.skip != 'true' && inputs.comment == 'true'
+        && github.event_name == 'pull_request'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        REPO: ${{ github.repository }}
+        PR: ${{ github.event.pull_request.number }}
+      run: |
+        report="$RUNNER_TEMP/evalgate-report.md"
+        [ -f "$report" ] || exit 0
+        # One comment per pull request, updated in place, found by the marker on its first line.
+        existing=$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
+          --jq '.[] | select(.body | startswith("<!-- evalgate-report -->")) | .id' | head -n 1)
+        if [ -n "$existing" ]; then
+          gh api -X PATCH "repos/$REPO/issues/comments/$existing" -F "body=@$report" > /dev/null
+        else
+          gh api -X POST "repos/$REPO/issues/$PR/comments" -F "body=@$report" > /dev/null
+        fi || echo "::warning::could not comment; a pull request from a fork gets a read-only token"
+
+    - name: Exit with the verdict
+      if: steps.base.outputs.skip != 'true'
+      shell: bash
+      env:
+        CODE: ${{ steps.compare.outputs.exit-code }}
+      run: exit "${CODE:-3}"
