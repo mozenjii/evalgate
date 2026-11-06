@@ -18,28 +18,83 @@ else. No model is involved, so this runs instantly and identically on any machin
 
 ```bash
 uv sync --all-groups
-export PYTHONPATH=examples/triage
-uv run evalgate run --dataset examples/triage/manifest.json --target target:classify_v1 --label v1
-uv run evalgate run --dataset examples/triage/manifest.json --target target:classify_v2 --label v2
-uv run evalgate runs
-uv run evalgate compare --baseline <v1-id> --candidate <v2-id> --dataset examples/triage/manifest.json
+config=examples/triage/evalgate.toml
+uv run evalgate run --config $config --label v1 --out v1.jsonl
+uv run evalgate run --config $config --label v2 --out v2.jsonl --target target:classify_v2
+uv run evalgate compare v1.jsonl v2.jsonl --config $config
 ```
 
 ```
-slice                       n                  difference  verdict
-intent=billing             40   +0.000 (-0.088 to +0.088)  inconclusive
-intent=refunds             40   +0.000 (-0.088 to +0.088)  inconclusive
-intent=warranty            40   -0.600 (-0.600 to -0.429)  regressed
+evalgate: regression found
+1 regressed / 2 not guarded / 0 ok
+Comparing `v2` against `v1` on `triage` v1 (120 items).
+
+Gate slices:
+  slice            scorer        n  difference (95% CI)     rules out drops over  tolerance  verdict
+  intent=warranty  exact_match  40  -60.0 (-60.0 to -42.9)                     -        5.0  regressed
+  intent=billing   exact_match  40  +0.0 (-8.8 to +8.8)                      8.8        5.0  not guarded
+  intent=refunds   exact_match  40  +0.0 (-8.8 to +8.8)                      8.8        5.0  not guarded
 ```
 
 It finds the regression in the slice that has it. Look at the other two lines though: nothing
-changed in billing or refunds, and it still won't call them a pass. Forty items with zero
-disagreements can't rule out a five-point drop, so it says so. Most tools would print three green
-ticks there, and two of them would mean nothing.
+changed in billing or refunds, and it still won't call them a pass. Forty items with no
+disagreements can rule out a drop of 8.8 points, not the 5 the tolerance asks for, and the report
+says exactly that. Most tools would print three green ticks there, and two of them would mean
+nothing. The fix is yours to choose: add items, or widen the tolerance on purpose.
 
-That's the whole idea. Exit code 1 means something regressed, 2 means the data couldn't answer, and
-0 means it could and nothing did. Inconclusive gets its own exit code because sharing one with
-success is exactly how an underpowered slice becomes a green tick.
+That's the whole idea. A slice that can't answer is never reported as a pass. Whether it fails the
+build is a policy you set: by default it warns, and `on_inconclusive = "fail"` makes it block.
+
+| Exit code | Meaning |
+|---|---|
+| 0 | Nothing regressed. Slices that are not guarded are reported, and only warn by default. |
+| 1 | A gate slice regressed by more than its tolerance. |
+| 2 | Nothing regressed, but a gate slice is not guarded and the policy is `fail`. |
+| 3 | The check could not run: a bad config, a missing file, a target that won't import. |
+
+## Use it on pull requests
+
+Add an `evalgate.toml` and a dataset to your repository (the [example](examples/triage/evalgate.toml)
+shows every part), then:
+
+```yaml
+on: pull_request
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  evalgate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt   # your project's own dependencies
+      - uses: mozenjii/evalgate@main
+```
+
+The action runs your target on the pull request's base commit and on its head, each in its own
+checkout, compares them, writes the report to the job summary and keeps one comment on the pull
+request up to date. It installs into your workflow's Python on purpose: your target runs inside
+evalgate, so it needs your dependencies beside it. A pull request from a fork gets a read-only
+token, so it gets the job summary but no comment.
+
+## Bring your own outputs
+
+evalgate doesn't have to call your model. If your pipeline already produces outputs, write them as
+a results file, one JSON object per line, and compare two of them:
+
+```json
+{"id": "billing-000", "output": "billing"}
+{"id": "billing-001", "output": "refunds", "latency_ms": 412.5}
+```
+
+Scoring happens at comparison time, against the dataset, so the file only needs ids and outputs.
+Unknown fields are refused rather than ignored, because a mistyped `ouput` would otherwise read as
+an item that produced nothing.
 
 ## What's built
 
@@ -58,16 +113,23 @@ success is exactly how an underpowered slice becomes a green tick.
   bound of the interval. A significance test on a forty-item slice passes almost everything, which is
   how a green check comes to mean nothing. δ is per slice and is a person's judgement, recorded next
   to the verdict.
-- **Run records.** SQLite, with output, latency, tokens and cost per item. Pairing two runs names the
-  items only one of them scored instead of quietly intersecting, because the item count is what you
-  use to judge whether a verdict means anything.
-- **A CLI and CI workflow** that turn all of that into an exit code.
+- **Results files.** One JSON object per item, with output, latency, tokens and cost. Each records a
+  hash of the input it answered: in CI the baseline runs from the base commit, so if a pull request
+  edits an item's question, the two answers are left out and listed instead of being compared as if
+  they answered the same thing. A crash counts as a failure, not a missing item.
+- **Every slice gets an answer.** Gate slices can fail the build; watch slices are reported only.
+  A declared slice with no items, or one paired item, is reported as a gap rather than dropped, so
+  the report is never quietly shorter than the config.
+- **A config file** holds everything a person decides. Tolerances have no default: how much worse a
+  slice may get is a judgement about that slice, and a default would be a number nobody chose.
+- **A CLI and a GitHub Action** that turn all of that into a pull-request comment and an exit code.
 
 ## Not built yet
 
-The LLM judge and its calibration against human labels, record-and-replay for model calls, log
-mining, promoting a production failure to a permanent case, the pull-request comment, and the
-seeded-regression benchmark that measures the gate's own detection and false-alarm rates.
+The LLM judge and its calibration against human labels, record-and-replay for model calls, a
+correction across many slices, telling you before you build a dataset how many items a slice needs,
+log mining, promoting a production failure to a permanent case, and the seeded-regression benchmark
+that measures the gate's own detection and false-alarm rates.
 
 ## How I know the statistics are right
 
@@ -125,12 +187,14 @@ measure the noise floor.
 ## Roadmap
 
 - [x] Dataset format, slices and provenance
-- [x] Run records
 - [x] Deterministic scorers
 - [x] Paired comparison, non-inferiority verdicts and the CLI
-- [ ] Redaction, a no-egress default for tests, and a budget cap on model calls
+- [x] Config file, results files, and a GitHub Action that comments on the pull request
+- [ ] The statistics settled by evidence: interval coverage, a correction across slices, measured
+      false-alarm rates
+- [ ] A real model: record-and-replay, redaction, a budget cap, no network in tests
+- [ ] A release: PyPI package and a tagged action
 - [ ] LLM judge with human calibration
-- [ ] GitHub Action and pull request comment
 - [ ] Failure-to-case promotion and log mining
 - [ ] Injected-regression benchmark and write-up
 
