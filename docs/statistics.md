@@ -128,8 +128,8 @@ difference = mean(differences)
 
 ### 4.2 Interval: bootstrap, BCa
 
-Used when at least 8 items moved and their differences are not all the same; sections 4.4 and
-4.5 cover the other cases.
+Used when at least 8 items moved and the `n` differences, unmoved items included, are not all
+the same; sections 4.4 and 4.5 cover the other cases.
 
 Resample the **paired differences** with replacement, `resamples` times, recomputing the mean each
 time. Resampling the two arrays independently would destroy the pairing.
@@ -180,8 +180,8 @@ resamples contain one or none of them, and the interval comes out far narrower t
 supports. Measured at a true difference of exactly `-delta`, BCa reported `non_inferior`:
 
 - every time when no item moved, because the interval collapsed to `[0, 0]`;
-- about 19% of the time with one item moved, 11% with two, 5-7% with three to six;
-- about 3% of the time from eight moved items up, against a nominal 2.5%.
+- about 20% of the time with one item moved, 10% with two, 3-5% with three to seven;
+- at or below the nominal 2.5% from eight moved items up.
 
 So **when fewer than 8 items moved**, the interval is not bootstrapped. It is the count bound:
 
@@ -212,7 +212,7 @@ never be shown to have regressed. Eight is a measured threshold, not a derived o
 
 ### 4.5 Every item moved by the same amount
 
-If at least 8 items moved but every difference is the same value `v`, there is nothing for a
+If every one of the `n` differences is the same value `v` (so all `n` items moved, and `n >= 8`), there is nothing for a
 resample to vary. The interval must not collapse to `[v, v]`, for the same reason as section 3.4:
 items the data never saw could differ from `v` by up to the score range. With
 `u = U(0, n) = 1 - (alpha/2)^(1/n)` bounding the share of such items:
@@ -321,7 +321,8 @@ as a pass is the precise failure this project exists to prevent. All three state
 reachable and tested.
 
 `delta` must be strictly positive; a tolerance of zero turns the question back into a
-significance test. Reject it.
+significance test. It must also be at most `1`: no difference can exceed the score range, so a
+larger tolerance asks nothing. Reject both.
 
 ### 6.2 A family of slices
 
@@ -404,7 +405,7 @@ Every "raise" in this document means **`ValueError`**, with a message naming the
 value.
 
 Mismatched `baseline` and `candidate` lengths is an error for both paired functions. So is a
-`tolerance` that is not strictly positive, and a continuous score outside `[0, 1]`.
+`tolerance` outside `(0, 1]`, and a continuous score outside `[0, 1]`. NaN is outside both.
 
 `clopper_pearson` requires `trials > 0`, `0 <= successes <= trials` and `0 < confidence < 1`.
 `tango_statistic` and `tango_interval` require `n > 0`, non-negative counts with
