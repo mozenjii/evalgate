@@ -145,6 +145,8 @@ def _verdict(entry: SliceComparison) -> str:
         return "regressed"
     if entry.verdict is Verdict.NON_INFERIOR:
         return "ok"
+    if entry.corrected:
+        return "not guarded (within chance across slices)"
     return f"not guarded ({entry.gap.value})" if entry.gap is not None else "not guarded"
 
 
@@ -164,8 +166,9 @@ def _notes(
         "Not guarded means the slice's data cannot rule out a drop as large as its tolerance. "
         "It is not a pass: add items, or widen the tolerance on purpose. Such slices "
         f"{consequence} (policy: {on_inconclusive}).",
-        "Each slice is tested on its own; no correction across slices is applied yet.",
+        _correction_note(comparison),
     ]
+    notes += _corrected_notes(comparison)
     for side in (comparison.base, comparison.head):
         notes += _side_notes(side, comparison)
     if comparison.input_changed:
@@ -179,6 +182,28 @@ def _notes(
         f"Method: [statistics notes]({METHOD_URL})." if markdown else f"Method: {METHOD_URL}"
     )
     return notes
+
+
+def _correction_note(comparison: Comparison) -> str:
+    """How many slices were tested together, and what that does to a regression."""
+    tested = sum(1 for entry in comparison.gate if entry.result is not None)
+    return (
+        f"{_count(tested, 'gate slice')} tested together: a regression must hold up after a "
+        "Holm correction for that many, so a check with many slices does not fail by chance. "
+        "Watch slices use Benjamini-Hochberg. Passing needs no correction, because it needs "
+        "every gate slice to pass."
+    )
+
+
+def _corrected_notes(comparison: Comparison) -> list[str]:
+    """Name each slice the correction kept from being called a regression, and why."""
+    return [
+        f"`{entry.slice}` on {entry.scorer}: on its own its interval rules out staying within "
+        "the tolerance, but with this many slices tested a drop that size is within what "
+        "chance produces. Add items to settle it."
+        for entry in comparison.slices
+        if entry.corrected
+    ]
 
 
 def _side_notes(side: RunSummary, comparison: Comparison) -> list[str]:

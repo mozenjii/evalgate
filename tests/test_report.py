@@ -1,5 +1,6 @@
 """The report puts the worst first, never calls a gap a pass, and says what was left out."""
 
+from dataclasses import replace
 from typing import Literal
 
 from evalgate.config import SliceRef, Tier
@@ -179,8 +180,21 @@ def test_the_policy_for_unguarded_slices_is_stated() -> None:
     assert "fail the build (policy: fail)" in markdown(comparison(UNGUARDED), "fail")
 
 
-def test_the_lack_of_a_cross_slice_correction_is_admitted() -> None:
-    assert "no correction across slices is applied yet" in markdown(comparison(FINE))
+def test_the_correction_across_slices_is_explained() -> None:
+    text = markdown(comparison(FINE, UNGUARDED))
+    assert "2 gate slices tested together" in text
+    assert "Holm" in text
+
+
+def test_a_regression_the_correction_kept_back_is_explained() -> None:
+    kept_back = replace(
+        entry("returns", Verdict.INCONCLUSIVE, (-0.18, -0.31, -0.06)), corrected=True
+    )
+
+    text = markdown(comparison(kept_back, FINE))
+
+    assert "not guarded (within chance across slices)" in text
+    assert "`intent=returns` on exact_match: on its own" in text
 
 
 def test_errors_ignored_ids_and_changed_inputs_are_listed() -> None:

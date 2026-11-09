@@ -12,22 +12,34 @@ stands now, that item is left out and listed. In CI the baseline runs from the b
 checkout, so a pull request that edits an item's input would otherwise pair an answer to the old
 question with an answer to the new one.
 
+Slices are decided together, not one by one. A check fails when any gate slice regresses, so
+the chance of a false failure grows with the number of slices; gate slices are corrected for that
+with Holm, watch slices with Benjamini-Hochberg. The pass side needs no correction, because the
+check passes only when every gate slice does. See `docs/statistics.md` section 5.
+
 Deliberate boundary: this decides. It does not read files, render anything or choose an exit
-code. Corrections across many slices are not applied yet, so nothing here claims a family-wide
-error rate; see `docs/statistics.md` section 5.
+code.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 
 from evalgate.config import Config, Rule, SliceRef, Tier
 from evalgate.dataset import Dataset
 from evalgate.results import DatasetRef, Results, input_digest
 from evalgate.scorers import Score, ScoreKind, Scorer
-from evalgate.stats import PairedResult, Verdict, judge, paired_binary, paired_continuous
+from evalgate.stats import (
+    Correction,
+    PairedResult,
+    Verdict,
+    family_verdicts,
+    judge,
+    paired_binary,
+    paired_continuous,
+)
 
 __all__ = [
     "Comparison",
@@ -80,10 +92,13 @@ class SliceComparison:
         size: Items the dataset holds in this slice.
         tolerance: How much worse the candidate was allowed to be.
         result: The paired comparison, or `None` when the slice could not support one.
-        verdict: Non-inferior, regressed or inconclusive. A gap is always inconclusive.
+        verdict: Non-inferior, regressed or inconclusive, after the correction across slices.
+            A gap is always inconclusive.
         gap: Why there is no interval, when there is none.
         unpaired: Slice items that could not be compared: missing from a run, or answering a
             different input. Non-empty means this verdict rests on fewer items than `size`.
+        corrected: True when this slice's own interval said regressed, but with this many
+            slices tested the drop is within what chance produces. The report says so.
     """
 
     tier: Tier
@@ -96,6 +111,7 @@ class SliceComparison:
     verdict: Verdict
     gap: Gap | None
     unpaired: tuple[str, ...]
+    corrected: bool = False
 
     @property
     def n(self) -> int:
@@ -249,7 +265,7 @@ def compare(config: Config, base: Results, head: Results) -> Comparison:
     head_scores = score_results(dataset, head, scorers)
     excluded = set(changed)
 
-    slices = tuple(
+    tested = [
         _compare_slice(
             rule,
             slice_ref,
@@ -262,7 +278,9 @@ def compare(config: Config, base: Results, head: Results) -> Comparison:
         )
         for rule in config.rules
         for slice_ref in rule.slices
-    )
+    ]
+    gated = _decide(tested, Tier.GATE, Correction.HOLM)
+    slices = _decide(gated, Tier.WATCH, Correction.BENJAMINI_HOCHBERG)
 
     return Comparison(
         dataset=dataset,
@@ -320,10 +338,39 @@ def _compare_slice(
         size=len(members),
         tolerance=tolerance,
         result=result,
-        verdict=Verdict.INCONCLUSIVE if result is None else judge(result.interval, tolerance),
+        # Provisional for a slice with an interval: `_decide` sets the verdict once every slice
+        # in its family has been tested.
+        verdict=Verdict.INCONCLUSIVE,
         gap=gap,
         unpaired=unpaired,
     )
+
+
+def _decide(
+    slices: Sequence[SliceComparison], tier: Tier, correction: Correction
+) -> tuple[SliceComparison, ...]:
+    """Set the verdict of every tested slice in one tier, correcting across them.
+
+    Slices of the other tier, and gaps, pass through unchanged: a gap was never tested, so it is
+    no part of the family.
+    """
+    members = [
+        index
+        for index, entry in enumerate(slices)
+        if entry.tier is tier and entry.result is not None
+    ]
+    results = [result for index in members if (result := slices[index].result) is not None]
+    decided = list(slices)
+    for index, result, final in zip(
+        members, results, family_verdicts(results, correction), strict=True
+    ):
+        alone = judge(result.interval, result.tolerance)
+        decided[index] = replace(
+            slices[index],
+            verdict=final,
+            corrected=alone is Verdict.REGRESSED and final is not Verdict.REGRESSED,
+        )
+    return tuple(decided)
 
 
 def _summarise(results: Results, current: Mapping[str, str]) -> RunSummary:

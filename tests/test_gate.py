@@ -317,6 +317,36 @@ def test_a_continuous_slice_where_many_items_moved_gets_the_bootstrap(tmp_path: 
     assert refunds.method == "bootstrap_bca"
 
 
+def test_a_marginal_regression_is_corrected_for_the_slices_tested_with_it(
+    tmp_path: Path,
+) -> None:
+    # Seven of forty refunds break. Tested alone that is a regression at p = 0.015; tested beside
+    # billing, Holm doubles it past 0.025, and the report must say why it is not called one.
+    seven_broken = {f"refunds-{index:02d}": "billing" for index in range(7)}
+
+    together = gate_slices(
+        compare(make_config(tmp_path / "a"), run("base"), run("head", seven_broken))
+    )
+    alone = compare(
+        make_config(tmp_path / "b", gate=("intent=refunds",)),
+        run("base"),
+        run("head", seven_broken),
+    )
+
+    assert together["intent=refunds"].verdict is Verdict.INCONCLUSIVE
+    assert together["intent=refunds"].corrected
+    (refunds,) = alone.gate
+    assert refunds.verdict is Verdict.REGRESSED
+    assert not refunds.corrected
+
+
+def test_a_clear_regression_survives_the_correction(tmp_path: Path) -> None:
+    comparison = compare(make_config(tmp_path), run("base"), run("head", refunds_broken()))
+    refunds = gate_slices(comparison)["intent=refunds"]
+    assert refunds.verdict is Verdict.REGRESSED
+    assert not refunds.corrected
+
+
 def test_rules_out_reads_the_lower_bound(tmp_path: Path) -> None:
     billing = gate_slices(compare(make_config(tmp_path), run("base"), run("head")))[
         "intent=billing"
