@@ -8,7 +8,15 @@ import pytest
 
 from evalgate.config import Config, Tier, load_config
 from evalgate.dataset import Item, content_hash
-from evalgate.gate import Comparison, Gap, GateError, Outcome, compare, score_results
+from evalgate.gate import (
+    Comparison,
+    Gap,
+    GateError,
+    Outcome,
+    SliceComparison,
+    compare,
+    score_results,
+)
 from evalgate.results import DatasetRef, ItemResult, Results, ResultsHeader, input_digest
 from evalgate.stats import Verdict
 
@@ -271,20 +279,42 @@ def test_runs_of_a_different_dataset_are_refused(tmp_path: Path) -> None:
         compare(make_config(tmp_path), run("base", dataset_name="other"), run("head"))
 
 
-def test_a_continuous_scorer_gets_the_bootstrap(tmp_path: Path) -> None:
-    config = make_config(
+def similarity_config(tmp_path: Path) -> Config:
+    return make_config(
         tmp_path,
         extra=(
-            '\n[[watch]]\nscorer = "edit_similarity"\nslices = ["intent=billing"]\n'
-            "tolerance = 0.05\n"
+            '\n[[watch]]\nscorer = "edit_similarity"\nslices = ["intent=*"]\ntolerance = 0.05\n'
         ),
     )
 
-    comparison = compare(config, run("base"), run("head", refunds_broken()))
 
-    (similarity,) = [entry for entry in comparison.watch if entry.scorer == "edit_similarity"]
-    assert similarity.result is not None
-    assert similarity.result.method == "bootstrap_bca"
+def similarity(comparison: Comparison, value: str) -> SliceComparison:
+    (entry,) = [
+        entry
+        for entry in comparison.watch
+        if entry.scorer == "edit_similarity" and entry.slice.value == value
+    ]
+    return entry
+
+
+def test_a_continuous_slice_where_nothing_moved_gets_the_count_bound(tmp_path: Path) -> None:
+    comparison = compare(similarity_config(tmp_path), run("base"), run("head", refunds_broken()))
+
+    billing = similarity(comparison, "billing").result
+    assert billing is not None
+    assert billing.method == "count_bound"
+    assert billing.interval.low < 0.0 < billing.interval.high
+
+
+def test_a_continuous_slice_where_many_items_moved_gets_the_bootstrap(tmp_path: Path) -> None:
+    variants = ("refund", "billing", "refunds please", "returns")
+    answer = {f"refunds-{index:02d}": variants[index % 4] for index in range(40)}
+
+    comparison = compare(similarity_config(tmp_path), run("base"), run("head", answer))
+
+    refunds = similarity(comparison, "refunds").result
+    assert refunds is not None
+    assert refunds.method == "bootstrap_bca"
 
 
 def test_rules_out_reads_the_lower_bound(tmp_path: Path) -> None:

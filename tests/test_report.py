@@ -47,8 +47,10 @@ def entry(
         result = PairedResult(
             n=size - len(unpaired),
             interval=Interval(point=point, low=low, high=high, confidence=0.95),
-            method="exact_conditional",
-            p_value=None,
+            method="tango_score",
+            tolerance=0.05,
+            p_non_inferior=0.5,
+            p_regressed=0.5,
         )
     return SliceComparison(
         tier=tier,
@@ -89,7 +91,7 @@ def comparison(
     )
 
 
-REGRESSED = entry("warranty", Verdict.REGRESSED, (-0.6, -0.6, -0.429))
+REGRESSED = entry("warranty", Verdict.REGRESSED, (-0.6, -0.737, -0.446))
 UNGUARDED = entry("billing", Verdict.INCONCLUSIVE, (0.0, -0.088, 0.088))
 FINE = entry("refunds", Verdict.NON_INFERIOR, (0.0, -0.02, 0.03))
 
@@ -130,7 +132,7 @@ def test_the_worst_slices_come_first() -> None:
 def test_differences_are_in_signed_points_with_their_interval() -> None:
     text = markdown(comparison(REGRESSED))
 
-    assert "-60.0 (-60.0 to -42.9)" in text
+    assert "-60.0 (-73.7 to -44.6)" in text
     assert "**regressed**" in text
 
 

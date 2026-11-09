@@ -301,12 +301,14 @@ def _compare_slice(
         result = paired_binary(
             [base[item].value == 1.0 for item in paired],
             [head[item].value == 1.0 for item in paired],
+            tolerance=tolerance,
             confidence=confidence,
         )
     else:
         result = paired_continuous(
             [base[item].value for item in paired],
             [head[item].value for item in paired],
+            tolerance=tolerance,
             confidence=confidence,
         )
 

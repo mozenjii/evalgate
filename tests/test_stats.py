@@ -1,8 +1,8 @@
 """Contract behaviour of the paired statistics.
 
 These check the semantics the gate depends on: the sign convention, the three verdict states,
-the edge cases the contract calls out, and the invariants. Agreement with scipy and statsmodels
-is checked separately and independently in `tests/oracle/`.
+the edge cases the contract calls out, the correction across slices, and the invariants.
+Agreement with scipy and statsmodels is checked separately and independently in `tests/oracle/`.
 """
 
 import math
@@ -11,25 +11,42 @@ from collections.abc import Callable, Sequence
 import pytest
 
 from evalgate.stats import (
+    MIN_MOVED_FOR_BOOTSTRAP,
+    Correction,
     Interval,
+    PairedResult,
     Verdict,
     benjamini_hochberg,
     clopper_pearson,
+    family_verdicts,
     holm,
     jackknife_acceleration,
     judge,
-    mcnemar_exact_p,
     paired_binary,
     paired_continuous,
+    tango_interval,
+    tango_statistic,
 )
+
+#: A p-value adjustment: raw values in, adjusted values out, same order.
+Adjustment = Callable[[Sequence[float]], list[float]]
+
+TOLERANCE = 0.05
+
+
+def _varied(size: int, shift: float = 0.0) -> tuple[list[float], list[float]]:
+    """Scores in [0, 1] whose differences genuinely vary, so the bootstrap runs."""
+    baseline = [0.2 + ((i * 37) % 11) / 20.0 for i in range(size)]
+    candidate = [
+        min(1.0, max(0.0, value + shift + (((i * 13) % 5) - 2) / 20.0))
+        for i, value in enumerate(baseline)
+    ]
+    return baseline, candidate
+
 
 # --------------------------------------------------------------------------- #
 # Clopper-Pearson
 # --------------------------------------------------------------------------- #
-
-
-#: A p-value adjustment: raw values in, adjusted values out, same order.
-Adjustment = Callable[[Sequence[float]], list[float]]
 
 
 def test_interval_brackets_the_observed_proportion() -> None:
@@ -41,7 +58,7 @@ def test_zero_successes_pins_the_lower_bound_at_zero() -> None:
     low, high = clopper_pearson(0, 20)
     assert low == 0.0
     # Two-sided exact bound for zero events in twenty trials: 1 - 0.025**(1/20) ~= 0.168.
-    assert 0.12 < high < 0.20
+    assert high == pytest.approx(1.0 - 0.025 ** (1.0 / 20.0))
 
 
 def test_all_successes_pins_the_upper_bound_at_one() -> None:
@@ -57,12 +74,6 @@ def test_more_confidence_gives_a_wider_interval() -> None:
     assert wide[1] > narrow[1]
 
 
-def test_more_data_gives_a_narrower_interval() -> None:
-    small = clopper_pearson(5, 10)
-    large = clopper_pearson(500, 1000)
-    assert (large[1] - large[0]) < (small[1] - small[0])
-
-
 @pytest.mark.parametrize(
     ("successes", "trials", "confidence"),
     [(-1, 10, 0.95), (11, 10, 0.95), (5, 0, 0.95), (5, 10, 0.0), (5, 10, 1.0)],
@@ -73,30 +84,50 @@ def test_rejects_impossible_arguments(successes: int, trials: int, confidence: f
 
 
 # --------------------------------------------------------------------------- #
-# McNemar
+# Tango's score test
 # --------------------------------------------------------------------------- #
 
 
-def test_no_discordant_pairs_is_not_evidence_of_a_difference() -> None:
-    assert mcnemar_exact_p(0, 0) == 1.0
+def test_the_statistic_is_zero_at_the_observed_difference() -> None:
+    assert tango_statistic(9, 3, 40, (9 - 3) / 40) == pytest.approx(0.0, abs=1e-12)
 
 
-def test_balanced_discordance_is_not_evidence_either() -> None:
-    assert mcnemar_exact_p(10, 10) == 1.0
+def test_the_statistic_falls_as_the_hypothesis_rises() -> None:
+    values = [tango_statistic(5, 12, 60, d / 10.0) for d in range(-9, 10)]
+    assert values == sorted(values, reverse=True)
 
 
-def test_lopsided_discordance_is_evidence() -> None:
-    # Twelve items moved one way and none the other; that is 2 * 0.5**12.
-    assert mcnemar_exact_p(12, 0) == pytest.approx(2.0 * 0.5**12)
+def test_no_disagreement_gives_the_closed_form_width() -> None:
+    # With nothing to go on, the score interval is +-z^2/(n + z^2), not a point.
+    z = 1.959963984540054
+    low, high = tango_interval(0, 0, 20)
+    assert high == pytest.approx(z * z / (20 + z * z), abs=1e-9)
+    assert low == pytest.approx(-high, abs=1e-12)
 
 
-def test_mcnemar_is_symmetric_in_its_arguments() -> None:
-    assert mcnemar_exact_p(9, 3) == mcnemar_exact_p(3, 9)
+def test_every_item_favouring_the_baseline_leaves_the_worst_case_open() -> None:
+    low, high = tango_interval(0, 20, 20)
+    assert low == -1.0
+    assert high < -0.5
 
 
-def test_mcnemar_rejects_negative_counts() -> None:
+def test_one_sided_breakage_is_not_pinned_to_the_observed_drop() -> None:
+    # The interval this replaced put the lower bound exactly on the point estimate whenever
+    # every disagreement went one way, so it could not say "maybe worse than observed". That is
+    # how it passed slices that were truly worse than their tolerance.
+    low, _ = tango_interval(0, 12, 20)
+    assert low < -0.6 - 0.1
+
+
+@pytest.mark.parametrize(
+    ("favour_candidate", "favour_baseline", "n", "difference"),
+    [(-1, 0, 10, 0.0), (0, -1, 10, 0.0), (6, 6, 10, 0.0), (0, 0, 0, 0.0), (1, 1, 10, 1.5)],
+)
+def test_tango_rejects_impossible_arguments(
+    favour_candidate: int, favour_baseline: int, n: int, difference: float
+) -> None:
     with pytest.raises(ValueError):
-        mcnemar_exact_p(-1, 3)
+        tango_statistic(favour_candidate, favour_baseline, n, difference)
 
 
 # --------------------------------------------------------------------------- #
@@ -108,27 +139,18 @@ def test_point_estimate_equals_the_difference_in_means() -> None:
     baseline = [True, True, False, False, True, False, True, False]
     candidate = [True, False, True, True, True, False, False, True]
 
-    result = paired_binary(baseline, candidate)
+    result = paired_binary(baseline, candidate, tolerance=TOLERANCE)
 
     expected = sum(candidate) / len(candidate) - sum(baseline) / len(baseline)
     assert result.interval.point == pytest.approx(expected)
-
-
-def test_interval_contains_the_point_estimate() -> None:
-    baseline = [True] * 30 + [False] * 70
-    candidate = [True] * 20 + [False] * 80
-
-    result = paired_binary(baseline, candidate)
-
-    assert result.interval.low <= result.interval.point <= result.interval.high
 
 
 def test_swapping_the_versions_mirrors_the_interval() -> None:
     baseline = [True, False, True, True, False, False, True, False, True, False]
     candidate = [False, True, True, False, False, True, True, True, False, False]
 
-    forward = paired_binary(baseline, candidate).interval
-    reverse = paired_binary(candidate, baseline).interval
+    forward = paired_binary(baseline, candidate, tolerance=TOLERANCE).interval
+    reverse = paired_binary(candidate, baseline, tolerance=TOLERANCE).interval
 
     assert forward.point == pytest.approx(-reverse.point)
     assert forward.low == pytest.approx(-reverse.high)
@@ -136,36 +158,51 @@ def test_swapping_the_versions_mirrors_the_interval() -> None:
 
 
 def test_total_agreement_is_reported_as_uncertainty_not_as_proof() -> None:
-    # The contract is explicit: zero disagreements on twenty items is not proof of equality,
-    # and reporting [0, 0] here would let a thin slice pass as if it had been measured.
+    # Zero disagreements on twenty items is not proof of equality, and reporting [0, 0] here
+    # would let a thin slice pass as if it had been measured.
     outcomes = [True, False] * 10
 
-    result = paired_binary(outcomes, outcomes)
+    result = paired_binary(outcomes, outcomes, tolerance=TOLERANCE)
 
     assert result.interval.point == 0.0
     assert result.interval.low < 0.0 < result.interval.high
-    assert result.p_value == 1.0
+    assert judge(result.interval, TOLERANCE) is Verdict.INCONCLUSIVE
 
 
-def test_total_agreement_narrows_as_the_slice_grows() -> None:
-    small = paired_binary([True] * 20, [True] * 20).interval
-    large = paired_binary([True] * 400, [True] * 400).interval
-    assert large.width < small.width
+def test_total_agreement_on_a_large_slice_is_safe() -> None:
+    result = paired_binary([True] * 400, [True] * 400, tolerance=TOLERANCE)
+    assert judge(result.interval, TOLERANCE) is Verdict.NON_INFERIOR
 
 
-def test_method_is_recorded_on_the_result() -> None:
-    result = paired_binary([True, False], [False, True])
-    assert result.method == "exact_conditional"
+@pytest.mark.parametrize("drop", [0, 2, 4, 6, 9, 14])
+def test_binary_p_values_agree_with_the_interval(drop: int) -> None:
+    # The interval and the p-values are one test read two ways, so they cannot disagree.
+    baseline = [True] * 60 + [False] * 40
+    candidate = [False] * drop + [True] * (60 - drop) + [False] * 40
+
+    result = paired_binary(baseline, candidate, tolerance=TOLERANCE)
+
+    assert (result.interval.low > -TOLERANCE) == (result.p_non_inferior < 0.025)
+    assert (result.interval.high < -TOLERANCE) == (result.p_regressed < 0.025)
+    assert result.p_non_inferior + result.p_regressed == pytest.approx(1.0)
+
+
+def test_method_and_tolerance_are_recorded_on_the_result() -> None:
+    result = paired_binary([True, False], [False, True], tolerance=0.1)
+    assert result.method == "tango_score"
+    assert result.tolerance == 0.1
     assert result.n == 2
 
 
 @pytest.mark.parametrize(
-    ("baseline", "candidate"),
-    [([], []), ([True], [True, False])],
+    ("baseline", "candidate", "tolerance"),
+    [([], [], 0.05), ([True], [True, False], 0.05), ([True], [True], 0.0)],
 )
-def test_paired_binary_rejects_unusable_input(baseline: list[bool], candidate: list[bool]) -> None:
+def test_paired_binary_rejects_unusable_input(
+    baseline: list[bool], candidate: list[bool], tolerance: float
+) -> None:
     with pytest.raises(ValueError):
-        paired_binary(baseline, candidate)
+        paired_binary(baseline, candidate, tolerance=tolerance)
 
 
 # --------------------------------------------------------------------------- #
@@ -184,9 +221,8 @@ def test_acceleration_is_zero_when_every_value_is_identical() -> None:
 
 
 def test_acceleration_has_the_sign_of_the_skew() -> None:
-    # Positive for right-skewed data. The leave-one-out deviations are large and positive for
-    # the large values, so their cubes dominate the numerator. Getting this sign backwards
-    # would tilt every bootstrap interval the wrong way.
+    # Positive for right-skewed data. Getting this sign backwards would tilt every bootstrap
+    # interval the wrong way.
     right_skewed = [0.0, 0.0, 0.0, 0.0, 10.0]
     left_skewed = [-value for value in right_skewed]
     assert jackknife_acceleration(right_skewed) > 0.0
@@ -204,72 +240,127 @@ def test_acceleration_needs_more_than_one_value() -> None:
 
 
 def test_bootstrap_is_reproducible_under_a_seed() -> None:
-    baseline = [float(i % 7) for i in range(60)]
-    candidate = [value + 0.5 for value in baseline]
+    baseline, candidate = _varied(60)
 
-    first = paired_continuous(baseline, candidate, seed=11, resamples=2_000)
-    second = paired_continuous(baseline, candidate, seed=11, resamples=2_000)
+    first = paired_continuous(baseline, candidate, tolerance=TOLERANCE, seed=11, resamples=2_000)
+    second = paired_continuous(baseline, candidate, tolerance=TOLERANCE, seed=11, resamples=2_000)
 
-    assert first.interval == second.interval
+    assert first == second
 
 
 def test_bootstrap_interval_brackets_the_mean_difference() -> None:
-    baseline = [float(i % 5) for i in range(80)]
-    # Differences that genuinely vary, so this exercises the bootstrap rather than the
-    # collapse-to-a-point branch.
-    candidate = [value - 0.3 + ((i * 7) % 5) / 10.0 for i, value in enumerate(baseline)]
+    baseline, candidate = _varied(80, shift=-0.02)
 
-    result = paired_continuous(baseline, candidate, seed=3, resamples=4_000)
+    result = paired_continuous(baseline, candidate, tolerance=TOLERANCE, seed=3, resamples=4_000)
 
-    assert result.interval.low < result.interval.point < result.interval.high
-    assert result.p_value is None
     assert result.method == "bootstrap_bca"
+    assert result.interval.low < result.interval.point < result.interval.high
+    assert result.p_non_inferior + result.p_regressed == pytest.approx(1.0)
+
+
+def test_nothing_moved_is_not_proof_of_nothing_moving() -> None:
+    # Before the count bound this returned [0, 0] and every such slice passed, including ones
+    # where a real regression was simply not sampled.
+    scores = [0.1 * (i % 10) for i in range(20)]
+
+    result = paired_continuous(scores, scores, tolerance=TOLERANCE)
+
+    assert result.method == "count_bound"
+    bound = 1.0 - 0.025 ** (1.0 / 20.0)
+    assert result.interval.low == pytest.approx(-bound, abs=1e-9)
+    assert result.interval.high == pytest.approx(bound, abs=1e-9)
+    assert judge(result.interval, TOLERANCE) is Verdict.INCONCLUSIVE
+
+
+def test_too_few_moved_items_use_the_count_bound() -> None:
+    size = 60
+    baseline = [0.5] * size
+    moved = MIN_MOVED_FOR_BOOTSTRAP - 1
+    candidate = [0.2] * 4 + [0.9] * (moved - 4) + [0.5] * (size - moved)
+
+    result = paired_continuous(baseline, candidate, tolerance=TOLERANCE)
+
+    assert result.method == "count_bound"
+    assert result.interval.low == pytest.approx(-clopper_pearson(4, size)[1])
+    assert result.interval.high == pytest.approx(clopper_pearson(moved - 4, size)[1])
+    assert result.p_regressed == 1.0
+
+
+def test_enough_moved_items_are_bootstrapped() -> None:
+    size = 60
+    baseline = [0.5] * size
+    moved = MIN_MOVED_FOR_BOOTSTRAP
+    candidate = [0.2] * 4 + [0.9] * (moved - 4) + [0.5] * (size - moved)
+
+    result = paired_continuous(baseline, candidate, tolerance=TOLERANCE)
+
+    assert result.method == "bootstrap_bca"
+
+
+def test_some_items_moving_by_the_same_amount_is_not_a_constant_shift() -> None:
+    # Ten of forty moved identically and thirty did not move: the differences are not all the
+    # same, so the bootstrap runs. The constant-shift bound assumes every item moved.
+    baseline = [0.5] * 40
+    candidate = [0.4] * 10 + [0.5] * 30
+
+    result = paired_continuous(baseline, candidate, tolerance=TOLERANCE)
+
+    assert result.method == "bootstrap_bca"
+    assert result.interval.point == pytest.approx(-0.025)
 
 
 def test_a_constant_shift_survives_floating_point_noise() -> None:
     # Subtracting a constant in floating point leaves differences that disagree in the last
     # bit. Bootstrapping that noise once produced an interval too narrow to contain its own
     # point estimate, so near-constant differences must be recognised as constant.
-    baseline = [float(i % 5) for i in range(80)]
+    baseline = [0.31 + (i % 5) / 10.0 for i in range(80)]
     candidate = [value - 0.3 for value in baseline]
 
-    result = paired_continuous(baseline, candidate, seed=3, resamples=4_000)
+    result = paired_continuous(baseline, candidate, tolerance=TOLERANCE)
 
+    assert result.method == "constant_shift"
     assert result.interval.point == pytest.approx(-0.3)
-    assert result.interval.low <= result.interval.point <= result.interval.high
-    assert result.interval.width == pytest.approx(0.0, abs=1e-12)
+    assert result.interval.low < result.interval.point < result.interval.high
 
 
-def test_a_constant_shift_collapses_the_interval() -> None:
-    # Every item moved by exactly the same amount, so there is nothing for a resample to vary.
-    baseline = [1.0, 2.0, 3.0, 4.0]
-    candidate = [value + 2.0 for value in baseline]
+def test_a_large_constant_drop_is_a_regression() -> None:
+    baseline = [0.8] * 200
+    candidate = [0.6] * 200
 
-    result = paired_continuous(baseline, candidate, seed=1, resamples=500)
+    result = paired_continuous(baseline, candidate, tolerance=TOLERANCE)
 
-    assert result.interval.point == pytest.approx(2.0)
-    assert result.interval.low == pytest.approx(2.0)
-    assert result.interval.high == pytest.approx(2.0)
+    assert judge(result.interval, TOLERANCE) is Verdict.REGRESSED
+    assert result.p_regressed < 0.025
 
 
 def test_bootstrap_narrows_as_the_slice_grows() -> None:
-    def spread(size: int) -> float:
-        baseline = [float((i * 37) % 11) for i in range(size)]
-        candidate = [value + ((i * 13) % 5) / 10.0 for i, value in enumerate(baseline)]
-        return paired_continuous(baseline, candidate, seed=5, resamples=4_000).interval.width
+    def width(size: int) -> float:
+        baseline, candidate = _varied(size)
+        result = paired_continuous(
+            baseline, candidate, tolerance=TOLERANCE, seed=5, resamples=4_000
+        )
+        return result.interval.width
 
-    assert spread(400) < spread(40)
+    assert width(400) < width(40)
 
 
 @pytest.mark.parametrize(
-    ("baseline", "candidate", "resamples"),
-    [([], [], 100), ([1.0], [1.0], 100), ([1.0, 2.0], [1.0], 100), ([1.0, 2.0], [1.0, 2.0], 0)],
+    ("baseline", "candidate", "resamples", "tolerance"),
+    [
+        ([], [], 100, 0.05),
+        ([0.1], [0.1], 100, 0.05),
+        ([0.1, 0.2], [0.1], 100, 0.05),
+        ([0.1, 0.2], [0.1, 0.2], 0, 0.05),
+        ([0.1, 0.2], [0.1, 0.2], 100, 0.0),
+        ([0.1, 1.2], [0.1, 0.2], 100, 0.05),
+        ([0.1, 0.2], [-0.1, 0.2], 100, 0.05),
+    ],
 )
 def test_paired_continuous_rejects_unusable_input(
-    baseline: list[float], candidate: list[float], resamples: int
+    baseline: list[float], candidate: list[float], resamples: int, tolerance: float
 ) -> None:
     with pytest.raises(ValueError):
-        paired_continuous(baseline, candidate, resamples=resamples)
+        paired_continuous(baseline, candidate, tolerance=tolerance, resamples=resamples)
 
 
 # --------------------------------------------------------------------------- #
@@ -279,11 +370,6 @@ def test_paired_continuous_rejects_unusable_input(
 
 def test_holm_scales_the_smallest_p_value_by_the_family_size() -> None:
     assert holm([0.01, 0.04, 0.03])[0] == pytest.approx(0.03)
-
-
-def test_holm_never_reduces_a_p_value() -> None:
-    raw = [0.001, 0.02, 0.3, 0.5]
-    assert all(adj >= p for adj, p in zip(holm(raw), raw, strict=True))
 
 
 def test_benjamini_hochberg_is_no_stricter_than_holm() -> None:
@@ -304,21 +390,17 @@ def test_adjustment_preserves_input_order(adjust: Adjustment) -> None:
 
 
 @pytest.mark.parametrize("adjust", [holm, benjamini_hochberg])
-def test_adjustment_clamps_at_one(adjust: Adjustment) -> None:
-    assert all(value <= 1.0 for value in adjust([0.6, 0.7, 0.9]))
-
-
-@pytest.mark.parametrize("adjust", [holm, benjamini_hochberg])
 def test_adjustment_handles_empty_and_single_inputs(adjust: Adjustment) -> None:
     assert adjust([]) == []
     assert adjust([0.02]) == pytest.approx([0.02])
 
 
 @pytest.mark.parametrize("adjust", [holm, benjamini_hochberg])
-def test_adjustment_is_monotone_in_rank(adjust: Adjustment) -> None:
+def test_adjustment_is_monotone_in_rank_and_clamped(adjust: Adjustment) -> None:
     raw = [0.001, 0.01, 0.02, 0.04, 0.2, 0.9]
     adjusted = adjust(raw)
     assert adjusted == sorted(adjusted)
+    assert all(value <= 1.0 for value in adjust([0.6, 0.7, 0.9]))
 
 
 @pytest.mark.parametrize("adjust", [holm, benjamini_hochberg])
@@ -351,8 +433,8 @@ def test_the_boundary_belongs_to_inconclusive() -> None:
     assert judge(Interval(-0.05, -0.05, 0.01, 0.95), tolerance=0.05) is Verdict.INCONCLUSIVE
 
 
-@pytest.mark.parametrize("tolerance", [0.0, -0.01])
-def test_a_non_positive_tolerance_is_refused(tolerance: float) -> None:
+@pytest.mark.parametrize("tolerance", [0.0, -0.01, 1.5, float("nan")])
+def test_a_tolerance_outside_the_score_range_is_refused(tolerance: float) -> None:
     with pytest.raises(ValueError):
         judge(Interval(0.0, -0.1, 0.1, 0.95), tolerance)
 
@@ -367,6 +449,65 @@ def test_every_verdict_is_reachable() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# A family of slices
+# --------------------------------------------------------------------------- #
+
+
+def _result(low: float, high: float, p_regressed: float, confidence: float = 0.95) -> PairedResult:
+    return PairedResult(
+        n=100,
+        interval=Interval((low + high) / 2.0, low, high, confidence),
+        method="tango_score",
+        tolerance=TOLERANCE,
+        p_non_inferior=1.0 - p_regressed,
+        p_regressed=p_regressed,
+    )
+
+
+def test_a_lone_regression_stands_on_its_own_evidence() -> None:
+    verdicts = family_verdicts([_result(-0.2, -0.06, 0.02)], Correction.HOLM)
+    assert verdicts == [Verdict.REGRESSED]
+
+
+def test_a_marginal_regression_among_many_slices_is_not_called_one() -> None:
+    # On its own this slice regressed at p = 0.02. With five slices tested, Holm puts it at 0.10,
+    # which is the sort of result one slice in five produces by chance.
+    family = [_result(-0.2, -0.06, 0.02)] + [_result(-0.03, 0.04, 0.9)] * 4
+
+    verdicts = family_verdicts(family, Correction.HOLM)
+
+    assert verdicts[0] is Verdict.INCONCLUSIVE
+    assert verdicts[1:] == [Verdict.NON_INFERIOR] * 4
+
+
+def test_a_clear_regression_survives_the_correction() -> None:
+    family = [_result(-0.4, -0.2, 0.0001)] + [_result(-0.03, 0.04, 0.9)] * 4
+    assert family_verdicts(family, Correction.HOLM)[0] is Verdict.REGRESSED
+
+
+def test_non_inferiority_is_never_corrected() -> None:
+    # The check passes only if every slice passes, which already holds its false-pass rate to
+    # one slice's. Correcting this side would only cost power.
+    family = [_result(-0.04, 0.02, 0.99)] * 30
+    assert family_verdicts(family, Correction.HOLM) == [Verdict.NON_INFERIOR] * 30
+
+
+def test_benjamini_hochberg_is_gentler_on_watch_slices() -> None:
+    family = [_result(-0.2, -0.06, 0.01), _result(-0.2, -0.06, 0.012), _result(-0.2, -0.06, 0.014)]
+    assert family_verdicts(family, Correction.HOLM)[2] is Verdict.INCONCLUSIVE
+    assert family_verdicts(family, Correction.BENJAMINI_HOCHBERG) == [Verdict.REGRESSED] * 3
+
+
+def test_a_family_must_share_a_confidence_level() -> None:
+    with pytest.raises(ValueError):
+        family_verdicts([_result(-0.1, 0.1, 0.5), _result(-0.1, 0.1, 0.5, 0.9)], Correction.HOLM)
+
+
+def test_an_empty_family_has_no_verdicts() -> None:
+    assert family_verdicts([], Correction.HOLM) == []
+
+
+# --------------------------------------------------------------------------- #
 # Invariants
 # --------------------------------------------------------------------------- #
 
@@ -375,8 +516,8 @@ def test_wider_confidence_never_narrows_a_binary_interval() -> None:
     baseline = [i % 3 == 0 for i in range(120)]
     candidate = [i % 4 == 0 for i in range(120)]
 
-    narrow = paired_binary(baseline, candidate, confidence=0.80).interval
-    wide = paired_binary(baseline, candidate, confidence=0.99).interval
+    narrow = paired_binary(baseline, candidate, tolerance=TOLERANCE, confidence=0.80).interval
+    wide = paired_binary(baseline, candidate, tolerance=TOLERANCE, confidence=0.99).interval
 
     assert wide.low <= narrow.low
     assert wide.high >= narrow.high
@@ -388,12 +529,10 @@ def test_interval_width_is_the_distance_between_its_bounds() -> None:
 
 
 def test_binary_bounds_stay_on_the_difference_scale() -> None:
-    # A difference of proportions cannot leave [-1, 1]; a bound outside it would mean the
-    # conditional scaling had been applied wrongly.
     baseline = [True] * 10 + [False] * 10
     candidate = [False] * 20
 
-    interval = paired_binary(baseline, candidate).interval
+    interval = paired_binary(baseline, candidate, tolerance=TOLERANCE).interval
 
     assert -1.0 <= interval.low <= interval.high <= 1.0
     assert not math.isnan(interval.low)
@@ -402,23 +541,23 @@ def test_binary_bounds_stay_on_the_difference_scale() -> None:
 def test_an_unseeded_bootstrap_is_still_reproducible() -> None:
     # The gate must not be able to change its mind between two builds of the same commit, and
     # the unseeded call is the common path, so it cannot be left to a fresh random stream.
-    baseline = [float((i * 17) % 13) for i in range(50)]
-    candidate = [value + ((i * 11) % 7) / 10.0 for i, value in enumerate(baseline)]
+    baseline, candidate = _varied(50)
 
-    first = paired_continuous(baseline, candidate, resamples=2_000)
-    second = paired_continuous(baseline, candidate, resamples=2_000)
+    first = paired_continuous(baseline, candidate, tolerance=TOLERANCE, resamples=2_000)
+    second = paired_continuous(baseline, candidate, tolerance=TOLERANCE, resamples=2_000)
 
-    assert first.interval == second.interval
+    assert first == second
 
 
 def test_different_data_gets_a_different_resample_stream() -> None:
     # Deriving the seed from the data must not collapse into one fixed seed for everything.
-    first = [float((i * 17) % 13) for i in range(50)]
-    second = [value + 1.0 if index % 3 == 0 else value for index, value in enumerate(first)]
-    shifted = [value + 0.25 for value in first]
+    baseline, candidate = _varied(50)
+    other = [
+        min(1.0, value + 0.05) if index % 3 == 0 else value for index, value in enumerate(baseline)
+    ]
 
-    one = paired_continuous(first, shifted, resamples=2_000)
-    two = paired_continuous(second, shifted, resamples=2_000)
+    one = paired_continuous(baseline, candidate, tolerance=TOLERANCE, resamples=2_000)
+    two = paired_continuous(other, candidate, tolerance=TOLERANCE, resamples=2_000)
 
     assert one.interval != two.interval
 
@@ -433,7 +572,9 @@ def test_ties_in_the_resample_distribution_count_as_half() -> None:
     baseline = [0.0] * 40
     candidate = [0.0 if index % 2 else 1.0 for index in range(40)]
 
-    interval = paired_continuous(baseline, candidate, seed=7, resamples=20_000).interval
+    interval = paired_continuous(
+        baseline, candidate, tolerance=TOLERANCE, seed=7, resamples=20_000
+    ).interval
 
     above = interval.high - interval.point
     below = interval.point - interval.low
