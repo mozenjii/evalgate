@@ -84,7 +84,7 @@ at a true difference of exactly `-delta`, that interval reported `non_inferior` 
 time against a nominal 2.5%, and the error grew with `n` instead of shrinking. Tango's interval
 puts the variance under the hypothesis being tested; on the same grid its worst case is about 3%.
 Newcombe's hybrid score interval was also measured, and reached 8%. The figures are in
-`docs/error-rates.md`, produced by `tools/error_rates.py`.
+[error-rates.md](error-rates.md), produced by `tools/error_rates.py`.
 
 A second reason: because the interval is the inversion of a test, the same statistic gives the
 p-values of section 3.5, and they agree with the interval exactly. The correction across slices
@@ -444,6 +444,6 @@ stdlib `math` and `statistics`, plus numpy for array arithmetic, are what it is 
 ## 10. Measured error rates
 
 The guarantees above are nominal. How close the methods come to them is measured, not assumed,
-by `tools/error_rates.py`, which writes `docs/error-rates.md`. It is seeded and runs
+by `tools/error_rates.py`, which writes [error-rates.md](error-rates.md). It is seeded and runs
 from a clean checkout. CI regenerates the file and fails if the committed copy differs, so the
 published numbers are always the ones the current code produces.

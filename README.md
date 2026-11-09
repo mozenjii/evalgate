@@ -31,7 +31,7 @@ Comparing `v2` against `v1` on `triage` v1 (120 items).
 
 Gate slices:
   slice            scorer        n  difference (95% CI)     rules out drops over  tolerance  verdict
-  intent=warranty  exact_match  40  -60.0 (-60.0 to -42.9)                     -        5.0  regressed
+  intent=warranty  exact_match  40  -60.0 (-73.7 to -44.6)                     -        5.0  regressed
   intent=billing   exact_match  40  +0.0 (-8.8 to +8.8)                      8.8        5.0  not guarded
   intent=refunds   exact_match  40  +0.0 (-8.8 to +8.8)                      8.8        5.0  not guarded
 ```
@@ -106,9 +106,15 @@ an item that produced nothing.
 - **Deterministic scorers.** Exact match, regex, JSON schema, set F1, edit similarity, or your own
   function. Each declares whether it's binary or continuous, because that picks the statistical test
   and inferring it from the values is silently wrong on a slice where everything passed.
-- **Paired statistics.** Binary scorers get an exact conditional interval — Clopper-Pearson over the
-  discordant pairs, since only disagreements carry information about a difference. Continuous ones
-  get a BCa bootstrap over the paired differences. Never two independent means.
+- **Paired statistics, chosen by measuring them.** Binary scorers get Tango's score interval.
+  Continuous ones get a BCa bootstrap over the paired differences, except where fewer than eight
+  items moved: there the bootstrap can't see the change, so an exact count bound takes over. Never
+  two independent means. Each choice beat the alternatives on measured error at the tolerance;
+  the numbers are below.
+- **Two errors, two controls.** A check passes only if every gate slice passes, so a false pass
+  needs no correction. It fails if any slice regresses, so false failures grow with the number of
+  slices; those are held down with a Holm correction, and the report names any slice it held
+  back. Watch slices use Benjamini-Hochberg.
 - **Non-inferiority, not significance.** The gate asks "is this at most δ worse?" and reads the lower
   bound of the interval. A significance test on a forty-item slice passes almost everything, which is
   how a green check comes to mean nothing. δ is per slice and is a person's judgement, recorded next
@@ -126,8 +132,8 @@ an item that produced nothing.
 
 ## Not built yet
 
-The LLM judge and its calibration against human labels, record-and-replay for model calls, a
-correction across many slices, telling you before you build a dataset how many items a slice needs,
+The LLM judge and its calibration against human labels, record-and-replay for model calls,
+telling you before you build a dataset how many items a slice needs,
 log mining, promoting a production failure to a permanent case, and the seeded-regression benchmark
 that measures the gate's own detection and false-alarm rates.
 
@@ -137,14 +143,15 @@ A tool that judges other tools needs its own evaluation, and I'd rather show tha
 
 I wrote the mathematics down first, in [docs/statistics.md](docs/statistics.md). Then the
 statistics are checked against scipy and statsmodels by an oracle written from that document alone,
-with no sight of the implementation it judges: 820 cases covering the exact binomial intervals, McNemar, Holm and Benjamini-Hochberg, the
-jackknife acceleration and the BCa bootstrap. `src/evalgate/stats.py` imports neither scipy nor
+with no sight of the implementation it judges: 1,229 cases covering Tango's interval against a
+numerical maximum-likelihood reference, the p-values at each tolerance, the count bound,
+Clopper-Pearson, Holm and Benjamini-Hochberg, the jackknife acceleration and the BCa bootstrap. `src/evalgate/stats.py` imports neither scipy nor
 statsmodels — one of the oracle's own tests parses the module to enforce it — because otherwise
 "it agrees with scipy" would be a statement about nothing. That's why the exact binomial tails and
 the Clopper-Pearson inversion are written out here instead of imported.
 
-A passing oracle proves nothing on its own, so I checked it can fail: flipping the sign of the
-binary point estimate breaks it, and restoring the sign fixes it.
+A passing oracle proves nothing on its own, so I check it can fail: shrinking Tango's variance by
+10% breaks it, and so does moving the bootstrap threshold from eight items to seven.
 
 It caught three real defects in my first implementation. The bootstrap drew a fresh random stream
 when no seed was given, so two runs of the same commit could reach different verdicts — on the
@@ -153,16 +160,31 @@ resample means strictly below the observed mean, which is fine on continuous dat
 wrong once scores take few distinct values. And my own contract contradicted itself about the
 zero-discordance bound.
 
+Agreeing with scipy only shows the code computes what I asked for. Whether I asked for the right
+thing is a separate question, so I measured how often each method is wrong at exactly the
+tolerance, where both errors are hardest to avoid. That found two worse problems. The binary
+interval I had shipped treated the disagreement rate as known; when a change breaks items and
+fixes none, it called a slice that was truly 10 points worse "safe" up to 48% of the time, and it
+got worse with more data. And on continuous scores, a slice where nothing happened to move came
+out as a zero-width interval, so it passed every time. Both are replaced, and the measurements
+that caught them are now a committed script.
+
 The same discipline applies to the build gates: format, lint, types, documentation links and tests
 behind one command, each one watched failing on purpose, which `tools/verify_gates.py` re-checks so
 it can't rot.
 
 ## Results
 
-Nothing goes in this table until a committed script in this repo produces it.
+Nothing goes in this table until a committed script in this repo produces it. The full tables are
+in [docs/error-rates.md](docs/error-rates.md), written by `tools/error_rates.py`; CI regenerates
+them and fails if they've drifted from the code.
 
 | Measurement | How | Result |
 |---|---|---|
+| False pass at the tolerance, binary slice | Exact, 66 cells, n 10 to 500 | worst 3.1% (nominal 2.5%); the interval it replaced reached 47.8% |
+| False fail at the tolerance, binary slice | Exact, same cells | worst 4.9%, at n = 200 when every disagreement goes one way |
+| False pass at the tolerance, continuous slice | Simulated, 16 settings, n 10 to 100 | worst 3.1% |
+| False fail across 10 gate slices | Simulated | 2.7% with Holm, 21.1% without |
 | Judge agreement with human labels, per rubric | Labelled set, second rater on a subset | not measured |
 | Detection rate on injected regressions, by size | Known regressions in the demo feature | not measured |
 | False alarms on reruns of unchanged code | Repeated reruns | not measured |
@@ -190,8 +212,8 @@ measure the noise floor.
 - [x] Deterministic scorers
 - [x] Paired comparison, non-inferiority verdicts and the CLI
 - [x] Config file, results files, and a GitHub Action that comments on the pull request
-- [ ] The statistics settled by evidence: interval coverage, a correction across slices, measured
-      false-alarm rates
+- [x] The statistics settled by evidence: interval error at the tolerance, a correction across
+      slices, published error rates
 - [ ] A real model: record-and-replay, redaction, a budget cap, no network in tests
 - [ ] A release: PyPI package and a tagged action
 - [ ] LLM judge with human calibration
