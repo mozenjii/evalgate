@@ -140,12 +140,14 @@ class RunSummary:
         dataset: The dataset its header names, when it has one.
         errors: Ids of items whose output was an error.
         unknown: Ids in the file that the dataset no longer holds. Ignored.
+        not_run: Count of items omitted by offline replay.
     """
 
     label: str
     dataset: DatasetRef | None
     errors: tuple[str, ...]
     unknown: tuple[str, ...]
+    not_run: int = 0
 
 
 @dataclass(frozen=True)
@@ -383,4 +385,5 @@ def _summarise(results: Results, current: Mapping[str, str]) -> RunSummary:
             item.id for item in results.items if item.error is not None and item.id in current
         ),
         unknown=tuple(item.id for item in results.items if item.id not in current),
+        not_run=(header.not_run or 0) if header is not None else 0,
     )

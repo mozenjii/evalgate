@@ -27,8 +27,17 @@ import typer
 from evalgate import gate
 from evalgate.config import Config, ConfigError, load_config
 from evalgate.dataset import Item
+from evalgate.model_run import ModelRunError, plan_model_run
+from evalgate.ollama import Ollama, OllamaError
 from evalgate.report import render_markdown, render_text
-from evalgate.results import DatasetRef, ResultsError, ResultsHeader, read_results, write_results
+from evalgate.results import (
+    DatasetRef,
+    ItemResult,
+    ResultsError,
+    ResultsHeader,
+    read_results,
+    write_results,
+)
 from evalgate.runner import TargetError, load_target, run_dataset
 from evalgate.scorers import ScorerError
 
@@ -106,9 +115,61 @@ def run(
         typer.Option("--target", help="module:function to call, overriding [target]."),
     ] = None,
     quiet: Annotated[bool, typer.Option("--quiet", help="No per-item progress.")] = False,
+    ollama_model: Annotated[
+        str | None, typer.Option(help="Ollama model to record or replay.")
+    ] = None,
+    ollama_port: Annotated[int, typer.Option(min=1, max=65535)] = 11434,
+    cassette_dir: Annotated[
+        Path | None, typer.Option(help="Directory of model recordings.")
+    ] = None,
+    allow_local_model: Annotated[
+        bool, typer.Option(help="Allow cache misses to call cloud-disabled local Ollama.")
+    ] = False,
+    max_calls: Annotated[int | None, typer.Option(min=0, help="Cap on live generations.")] = None,
+    max_cost_usd: Annotated[
+        float | None, typer.Option(help="Allowed inference spend in USD.")
+    ] = None,
+    dry_run: Annotated[
+        bool, typer.Option(help="Print the model call estimate without writing.")
+    ] = False,
+    redact: Annotated[
+        str | None, typer.Option(help="Trusted module:function for model outputs.")
+    ] = None,
 ) -> None:
     """Run every item of the dataset through a target and write a results file."""
     config = _config(config_path)
+    model_options_used = (
+        ollama_port != 11434
+        or cassette_dir is not None
+        or allow_local_model
+        or max_calls is not None
+        or max_cost_usd is not None
+        or dry_run
+        or redact is not None
+    )
+    if ollama_model is not None:
+        if target is not None or cassette_dir is None:
+            _fail("--ollama-model requires --cassette-dir and cannot be combined with --target")
+        if max_cost_usd is not None and not 0 <= max_cost_usd < float("inf"):
+            _fail("--max-cost-usd must be finite and non-negative")
+        if allow_local_model and max_calls is None and not dry_run:
+            _fail("--allow-local-model requires an explicit --max-calls")
+        _run_model(
+            config,
+            label,
+            out,
+            ollama_model,
+            ollama_port,
+            cassette_dir,
+            allow_local_model=allow_local_model,
+            max_calls=max_calls or 0,
+            dry_run=dry_run,
+            redact=redact,
+        )
+        return
+    if model_options_used:
+        _fail("model run options require --ollama-model")
+
     spec = config.target
     reference = target or (spec.reference if spec is not None else None)
     if reference is None:
@@ -124,13 +185,62 @@ def run(
     dataset = config.dataset
     progress = None if quiet else _progress(len(dataset))
     items = run_dataset(dataset, function, on_item=progress)
-    manifest = dataset.manifest
+    if progress is not None:
+        typer.echo("")
+    _write_run(config, label, out, items)
+
+
+def _run_model(
+    config: Config,
+    label: str,
+    out: Path,
+    model: str,
+    port: int,
+    directory: Path,
+    *,
+    allow_local_model: bool,
+    max_calls: int,
+    dry_run: bool,
+    redact: str | None,
+) -> None:
+    """Finish model preflight, then either report the estimate or produce results."""
+    try:
+        provider = Ollama(model, port)
+        plan = plan_model_run(config.dataset, provider, directory, redactor=redact)
+        typer.echo(
+            f"{plan.hits} replay hit(s), {plan.unrecorded_items} item(s) missing, "
+            f"up to {plan.misses} live generation(s) if enabled, estimated USD 0.00"
+        )
+        if dry_run:
+            return
+        redactor = None
+        if allow_local_model and 0 < plan.misses <= max_calls:
+            provider.validate_local()
+            if redact is not None:
+                redactor = load_target(redact, (config.source.resolve().parent,))
+        items = plan.execute(allow_local=allow_local_model, max_calls=max_calls, redact=redactor)
+    except (OllamaError, ModelRunError) as error:
+        _fail(str(error))
+    except TargetError:
+        _fail("could not load the model output redactor")
+    not_run = 0 if allow_local_model else plan.unrecorded_items
+    _write_run(config, label, out, items, not_run=not_run)
+    if not_run:
+        typer.echo(f"  {not_run} item(s) not run (no recording)")
+
+
+def _write_run(
+    config: Config, label: str, out: Path, items: tuple[ItemResult, ...], *, not_run: int = 0
+) -> None:
+    """Write a run in the same results format for every target."""
+    manifest = config.dataset.manifest
     header = ResultsHeader(
         label=label,
         dataset=DatasetRef(
             name=manifest.name, version=manifest.version, sha256=manifest.content_sha256
         ),
         created_at=datetime.now(UTC),
+        not_run=not_run or None,
     )
     try:
         write_results(out, header, items)
@@ -138,8 +248,6 @@ def run(
         _fail(str(error))
 
     errors = sum(1 for item in items if item.error is not None)
-    if progress is not None:
-        typer.echo("")
     typer.echo(f"{label}: {len(items)} items from {manifest.name} v{manifest.version} -> {out}")
     if errors:
         typer.secho(f"  {errors} item(s) raised; they count as failures", fg=typer.colors.YELLOW)

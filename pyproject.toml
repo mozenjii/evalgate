@@ -141,6 +141,7 @@ testpaths = ["tests"]
 pythonpath = ["tools"]
 addopts = "-q --strict-markers --strict-config"
 xfail_strict = true
+markers = ["network: explicitly allow sockets in this test"]
 
 [tool.coverage.run]
 branch = true

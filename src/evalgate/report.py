@@ -209,6 +209,8 @@ def _corrected_notes(comparison: Comparison) -> list[str]:
 def _side_notes(side: RunSummary, comparison: Comparison) -> list[str]:
     """Notes about one run: errors, ignored ids, and a dataset that has since changed."""
     notes: list[str] = []
+    if side.not_run:
+        notes.append(f"`{side.label}`: {_count(side.not_run, 'item')} not run (no recording).")
     if side.errors:
         notes.append(
             f"`{side.label}`: {_count(len(side.errors), 'item')} errored and count as failures: "

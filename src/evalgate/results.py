@@ -75,6 +75,7 @@ class ResultsHeader(BaseModel):
         label: What this run was: a prompt version, a model, a commit.
         dataset: The dataset the run used, when known.
         created_at: When the run finished.
+        not_run: Items omitted because replay had no recording, when applicable.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -84,6 +85,7 @@ class ResultsHeader(BaseModel):
     label: str = Field(min_length=1)
     dataset: DatasetRef | None = None
     created_at: datetime | None = None
+    not_run: int | None = Field(default=None, gt=0, strict=True)
 
 
 class ItemResult(BaseModel):
@@ -174,7 +176,7 @@ def read_results(path: Path) -> Results:
     Raises:
         ResultsError: If the file is missing, a line is not JSON or not a valid item, a header
             appears anywhere but the first line, the format version is newer than this build,
-            an id repeats, or there are no items at all.
+            an id repeats, or an empty file lacks an explicit replay omission count.
     """
     try:
         text = path.read_text(encoding="utf-8")
@@ -209,7 +211,7 @@ def read_results(path: Path) -> Results:
             items.append(item)
         first = False
 
-    if not items:
+    if not items and (header is None or header.not_run is None):
         raise ResultsError(f"{path}: no items; there is nothing to compare")
     return Results(header=header, items=tuple(items), source=path)
 
