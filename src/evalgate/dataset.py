@@ -21,7 +21,7 @@ from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Self
+from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError, model_validator
 
@@ -77,6 +77,7 @@ class Item(BaseModel):
         slices: One value for every slice dimension the manifest declares.
         provenance: Where this item came from.
         source: Optional free-text pointer, such as a ticket or a run id.
+        ratchet: Explicitly protect a reviewed promoted case, including a synthetic one.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -87,6 +88,7 @@ class Item(BaseModel):
     slices: Mapping[str, str]
     provenance: Provenance
     source: str | None = None
+    ratchet: Literal[True] | None = None
 
     @model_validator(mode="after")
     def _require_a_slice(self) -> Self:
@@ -212,8 +214,12 @@ def content_hash(items: Sequence[Item]) -> str:
     """
     digest = hashlib.sha256()
     for item in items:
+        # Unmarked cases keep their original v1 digest after adding the optional flag.
         canonical = json.dumps(
-            item.model_dump(mode="json"), sort_keys=True, separators=(",", ":"), ensure_ascii=False
+            item.model_dump(mode="json", exclude={"ratchet"} if item.ratchet is None else None),
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
         )
         digest.update(canonical.encode("utf-8"))
         digest.update(b"\n")
