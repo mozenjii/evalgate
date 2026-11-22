@@ -82,6 +82,9 @@ request up to date. It installs into your workflow's Python on purpose: your tar
 evalgate, so it needs your dependencies beside it. A pull request from a fork gets a read-only
 token, so it gets the job summary but no comment.
 
+The [local Ollama walkthrough](docs/ollama.md) shows how to estimate calls, record a run at
+zero provider cost, and replay it offline in the CLI or Action.
+
 ## Bring your own outputs
 
 evalgate doesn't have to call your model. If your pipeline already produces outputs, write them as

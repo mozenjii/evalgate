@@ -1,0 +1,14 @@
+[dataset]
+manifest = "manifest.json"
+
+[[scorer]]
+type = "exact_match"
+
+# This illustrative tolerance exercises the reporting path. The sample is too small to guard it.
+[[gate]]
+scorer = "exact_match"
+slices = ["species=*"]
+tolerance = 0.05
+
+[policy]
+on_inconclusive = "warn"

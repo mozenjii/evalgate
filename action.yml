@@ -32,6 +32,15 @@ inputs:
   comment:
     description: Post or update a comment on the pull request ("true" or "false").
     default: "true"
+  ollama-model:
+    description: Replay recordings for this Ollama model. The action never makes live model calls.
+    default: ""
+  cassette-dir:
+    description: Recording directory, relative to the head checkout or absolute.
+    default: ""
+  redactor:
+    description: Recording key namespace used by the local --redact option, if any.
+    default: ""
 
 outputs:
   exit-code:
@@ -58,6 +67,9 @@ runs:
         BASE_REF: ${{ inputs.base-ref || github.event.pull_request.base.sha }}
         EVALGATE_CONFIG: ${{ inputs.config }}
         PYTHON: ${{ inputs.python }}
+        MODEL: ${{ inputs.ollama-model }}
+        CASSETTES: ${{ inputs.cassette-dir }}
+        REDACTOR: ${{ inputs.redactor }}
       run: |
         if [ -z "$BASE_REF" ]; then
           echo "::error::no base commit: set base-ref, or run on a pull_request event"
@@ -72,9 +84,16 @@ runs:
           echo "skip=true" >> "$GITHUB_OUTPUT"
           exit 0
         fi
+        model_args=()
+        if [ -n "$MODEL" ]; then
+          [ -n "$CASSETTES" ] || { echo "::error::cassette-dir is required for model replay"; exit 3; }
+          cassette_path=$("$PYTHON" -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).absolute())' "$CASSETTES")
+          model_args=(--ollama-model "$MODEL" --cassette-dir "$cassette_path")
+          if [ -n "$REDACTOR" ]; then model_args+=(--redact "$REDACTOR"); fi
+        fi
         cd "$RUNNER_TEMP/evalgate-base"
         "$PYTHON" -m evalgate.cli run --config "$EVALGATE_CONFIG" --label base \
-          --out "$RUNNER_TEMP/evalgate-base.jsonl" --quiet
+          --out "$RUNNER_TEMP/evalgate-base.jsonl" --quiet "${model_args[@]}"
 
     - name: Produce results for this commit
       if: steps.base.outputs.skip != 'true'
@@ -82,9 +101,18 @@ runs:
       env:
         EVALGATE_CONFIG: ${{ inputs.config }}
         PYTHON: ${{ inputs.python }}
+        MODEL: ${{ inputs.ollama-model }}
+        CASSETTES: ${{ inputs.cassette-dir }}
+        REDACTOR: ${{ inputs.redactor }}
       run: |
+        model_args=()
+        if [ -n "$MODEL" ]; then
+          [ -n "$CASSETTES" ] || { echo "::error::cassette-dir is required for model replay"; exit 3; }
+          model_args=(--ollama-model "$MODEL" --cassette-dir "$CASSETTES")
+          if [ -n "$REDACTOR" ]; then model_args+=(--redact "$REDACTOR"); fi
+        fi
         "$PYTHON" -m evalgate.cli run --config "$EVALGATE_CONFIG" --label head \
-          --out "$RUNNER_TEMP/evalgate-head.jsonl" --quiet
+          --out "$RUNNER_TEMP/evalgate-head.jsonl" --quiet "${model_args[@]}"
 
     - name: Compare
       id: compare

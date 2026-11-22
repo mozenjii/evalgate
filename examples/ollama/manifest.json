@@ -1,0 +1,14 @@
+{
+  "name": "uci-iris-ollama",
+  "version": "1",
+  "items_file": "items.jsonl",
+  "content_sha256": "05399a7cfc3b29cf157f4fdec99b83d538abd866c8040eedf16e3c488751be49",
+  "slice_dimensions": {
+    "species": [
+      "setosa",
+      "versicolor",
+      "virginica"
+    ]
+  },
+  "description": "Nine public Iris cases adapted for a local model and replay demonstration."
+}

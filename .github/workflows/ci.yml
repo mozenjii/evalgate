@@ -7,10 +7,7 @@
 #
 # Not gated yet, so that the absence is a decision and not an oversight:
 #
-#   - Anything calling a model. No provider interface exists yet, and when it does,
-#     CI will replay recorded calls rather than make live ones.
-#   - Redaction, a no-egress default and a budget cap on model calls. CI handles no
-#     real data until those exist, which is why the datasets here are synthetic.
+#   - Live model calls. Tests block sockets and the model replay job runs offline.
 #   - The pull-request comment. The action job below runs the whole check on every push,
 #     but with comments off: a push has no pull request to comment on.
 #   - Accessibility and performance budgets. They need a URL, and there is no UI.
@@ -166,3 +163,28 @@ jobs:
             echo "::error::expected exit 1 (regressed), got $code"
             exit 1
           fi
+
+  model-replay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/iris-cassettes
+          key: evalgate-iris-qwen2.5-0.5b-v1
+      - name: Replay the public example with no model server
+        id: replay
+        uses: ./
+        with:
+          config: examples/ollama/evalgate.toml
+          base-ref: ${{ github.sha }}
+          comment: "false"
+          ollama-model: qwen2.5:0.5b
+          cassette-dir: ${{ runner.temp }}/iris-cassettes
+      - name: The small example reports unguarded slices
+        run: |
+          grep -F '3 not guarded' "$RUNNER_TEMP/evalgate-report.md"
