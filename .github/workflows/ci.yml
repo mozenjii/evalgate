@@ -126,6 +126,9 @@ jobs:
       - name: The published error rates are current
         run: uv run python tools/error_rates.py --check
 
+      - name: The seeded regression benchmark is current
+        run: uv run python tools/benchmark.py --check
+
   # Runs this repository's own action against the example, the way a user's workflow would:
   # installed from source into a plain Python, base and head checked out separately. The
   # example is unchanged between the two, so the verdict is "not guarded" under a warn policy
