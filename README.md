@@ -143,6 +143,11 @@ how many items a slice needs,
 log mining, promoting a production failure to a permanent case, and the seeded-regression benchmark
 that measures the gate's own detection and false-alarm rates.
 
+See the [release guide](docs/release.md) for building and verifying distribution candidates.
+
+EvalGate's code is [MIT-licensed](LICENSE). The [Iris data](docs/ollama.md) carries its
+source license and attribution.
+
 ## How I know the statistics are right
 
 A tool that judges other tools needs its own evaluation, and I'd rather show that than assert it.

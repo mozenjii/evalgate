@@ -1,0 +1,65 @@
+name: release
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.13.6"
+          enable-cache: true
+      - name: Verify the source
+        run: uv run --locked python tools/check.py
+      - name: Build and inspect the distributions
+        env:
+          PYPI_PROJECT_NAME: ${{ vars.PYPI_PROJECT_NAME }}
+        run: |
+          uv build --no-sources --out-dir dist
+          release_args=()
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            release_args=(--tag "$GITHUB_REF_NAME" --project "$PYPI_PROJECT_NAME")
+          fi
+          uv run --locked python tools/check_distribution.py dist "${release_args[@]}"
+      - name: Verify both artifacts in isolated installs
+        run: |
+          project=$(uv run --locked python -c 'import tomllib; from pathlib import Path; print(tomllib.loads(Path("pyproject.toml").read_text())["project"]["name"])')
+          cd "$RUNNER_TEMP"
+          for artifact in "$GITHUB_WORKSPACE"/dist/*.whl "$GITHUB_WORKSPACE"/dist/*.tar.gz; do
+            uv run --no-project --isolated --python 3.12 --with "$artifact" \
+              python "$GITHUB_WORKSPACE/tools/smoke_install.py" \
+              "$GITHUB_WORKSPACE/examples/triage" "$project"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: distributions
+          path: |
+            dist/*.whl
+            dist/*.tar.gz
+          if-no-files-found: error
+
+  publish:
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: distributions
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # release/v1
