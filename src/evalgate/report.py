@@ -141,10 +141,14 @@ def _row(entry: SliceComparison) -> tuple[str, ...]:
 
 def _verdict(entry: SliceComparison) -> str:
     """The verdict in words. Inconclusive is never called a pass."""
+    if entry.case_regressions:
+        return "regressed (promoted case)"
     if entry.verdict is Verdict.REGRESSED:
         return "regressed"
     if entry.verdict is Verdict.NON_INFERIOR:
         return "ok"
+    if entry.case_missing:
+        return "not guarded (promoted case missing)"
     if entry.corrected:
         return "not guarded (within chance across slices)"
     return f"not guarded ({entry.gap.value})" if entry.gap is not None else "not guarded"
@@ -169,6 +173,18 @@ def _notes(
         _correction_note(comparison),
     ]
     notes += _corrected_notes(comparison)
+    notes += [
+        f"`{entry.slice}` on {entry.scorer}: promoted cases passed the baseline and failed "
+        f"the candidate: {_some(entry.case_regressions)}."
+        for entry in comparison.gate
+        if entry.case_regressions
+    ]
+    notes += [
+        f"`{entry.slice}` on {entry.scorer}: promoted cases passed the baseline and were "
+        f"missing from the candidate: {_some(entry.case_missing)}."
+        for entry in comparison.gate
+        if entry.case_missing
+    ]
     for side in (comparison.base, comparison.head):
         notes += _side_notes(side, comparison)
     if comparison.input_changed:

@@ -1,0 +1,13 @@
+{
+  "name": "synthetic-support-replies",
+  "version": "1",
+  "items_file": "items.jsonl",
+  "content_sha256": "da61e205c96a3533afd0b6c938689443fa658bca9d3f6c6dcb2a52c7bfc88926",
+  "slice_dimensions": {
+    "topic": [
+      "delivery",
+      "returns"
+    ]
+  },
+  "description": "Fictional delivery and returns questions for a local judge replay."
+}

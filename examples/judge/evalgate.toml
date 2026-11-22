@@ -1,0 +1,17 @@
+[dataset]
+manifest = "manifest.json"
+
+[target]
+callable = "reply_target:baseline"
+pythonpath = ["."]
+
+[[scorer]]
+type = "judge_pass"
+
+[[gate]]
+scorer = "judge_pass"
+slices = ["topic=*"]
+tolerance = 0.05
+
+[policy]
+on_inconclusive = "warn"

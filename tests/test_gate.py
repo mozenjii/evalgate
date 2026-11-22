@@ -1,6 +1,7 @@
 """The gate answers for every slice it was asked about, and never hides a gap."""
 
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,7 @@ from evalgate.gate import (
     score_results,
 )
 from evalgate.results import DatasetRef, ItemResult, Results, ResultsHeader, input_digest
+from evalgate.scorers import JudgePass
 from evalgate.stats import Verdict
 
 INTENTS = {"billing": 40, "refunds": 40, "warranty": 0}
@@ -145,6 +147,60 @@ def test_a_regression_is_found_in_the_slice_that_has_it(tmp_path: Path) -> None:
     assert gate["intent=refunds"].result.interval.point == pytest.approx(-1.0)
     assert gate["intent=billing"].verdict is Verdict.NON_INFERIOR
     assert comparison.outcome is Outcome.REGRESSED
+
+
+def test_one_promoted_case_regression_fails_without_statistical_category_shift(
+    tmp_path: Path,
+) -> None:
+    config = make_config(tmp_path)
+    promoted_id = config.dataset.items[0].id
+    promoted = Item.model_validate(
+        {**config.dataset.items[0].model_dump(exclude_none=True), "ratchet": True}
+    )
+    config = replace(
+        config, dataset=replace(config.dataset, items=(promoted, *config.dataset.items[1:]))
+    )
+    head = run("head", {promoted_id: "wrong"})
+    comparison = compare(config, run("base"), head)
+    billing = gate_slices(comparison)["intent=billing"]
+    assert comparison.outcome is Outcome.REGRESSED
+    assert billing.case_regressions == (promoted_id,)
+    assert all(not entry.case_regressions for entry in comparison.watch)
+    assert compare(config, head, head).outcome is not Outcome.REGRESSED
+    without_promoted = run("head", skip=frozenset({promoted_id}))
+    missing = compare(config, run("base"), without_promoted)
+    assert missing.outcome is Outcome.UNGUARDED
+    assert gate_slices(missing)["intent=billing"].case_missing == (promoted_id,)
+
+
+def test_grades_must_match_the_current_reference_dataset(tmp_path: Path) -> None:
+    config = replace(make_config(tmp_path), scorers={"exact_match": JudgePass(name="exact_match")})
+    target = run("base")
+    graded = Results(
+        header=ResultsHeader(
+            label="graded",
+            judgement_sha256="b" * 64,
+            dataset=DatasetRef(
+                name="toy", version="1", sha256=config.dataset.manifest.content_sha256
+            ),
+        ),
+        items=tuple(item.model_copy(update={"output": True}) for item in target.items),
+    )
+    assert compare(config, graded, graded).outcome is Outcome.UNGUARDED
+    first, *remaining = config.dataset.items
+    edited = (first.model_copy(update={"expected": "revised answer"}), *remaining)
+    changed = replace(
+        config,
+        dataset=replace(
+            config.dataset,
+            items=edited,
+            manifest=config.dataset.manifest.model_copy(
+                update={"content_sha256": content_hash(edited)}
+            ),
+        ),
+    )
+    with pytest.raises(GateError, match="current dataset"):
+        compare(changed, graded, graded)
 
 
 def test_a_slice_too_thin_for_its_tolerance_is_not_a_pass(tmp_path: Path) -> None:

@@ -28,6 +28,7 @@ from evalgate.scorers import (
     EditSimilarity,
     ExactMatch,
     JsonSchemaMatch,
+    JudgePass,
     RegexMatch,
     Scorer,
     ScorerError,
@@ -151,6 +152,11 @@ class _ExactMatch(_Strict):
     strip: bool = True
 
 
+class _JudgePass(_Strict):
+    type: Literal["judge_pass"]
+    name: str | None = None
+
+
 class _Regex(_Strict):
     type: Literal["regex"]
     name: str | None = None
@@ -179,7 +185,8 @@ class _EditSimilarity(_Strict):
 
 
 _ScorerTable = Annotated[
-    _ExactMatch | _Regex | _JsonSchema | _SetF1 | _EditSimilarity, Field(discriminator="type")
+    _ExactMatch | _Regex | _JsonSchema | _SetF1 | _EditSimilarity | _JudgePass,
+    Field(discriminator="type"),
 ]
 
 
@@ -310,6 +317,8 @@ def _build_scorer(table: _ScorerTable, root: Path) -> Scorer:
     match table:
         case _ExactMatch():
             return ExactMatch(name=name, case_sensitive=table.case_sensitive, strip=table.strip)
+        case _JudgePass():
+            return JudgePass(name=name)
         case _Regex():
             return RegexMatch(
                 pattern=table.pattern, name=name, full=table.full, ignore_case=table.ignore_case

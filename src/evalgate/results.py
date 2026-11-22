@@ -76,6 +76,7 @@ class ResultsHeader(BaseModel):
         dataset: The dataset the run used, when known.
         created_at: When the run finished.
         not_run: Items omitted because replay had no recording, when applicable.
+        judgement_sha256: Fingerprint of the rubric, judge model and grading protocol.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -86,6 +87,7 @@ class ResultsHeader(BaseModel):
     dataset: DatasetRef | None = None
     created_at: datetime | None = None
     not_run: int | None = Field(default=None, gt=0, strict=True)
+    judgement_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
 
 
 class ItemResult(BaseModel):

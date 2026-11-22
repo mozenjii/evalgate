@@ -28,9 +28,9 @@ from dataclasses import dataclass, replace
 from enum import StrEnum
 
 from evalgate.config import Config, Rule, SliceRef, Tier
-from evalgate.dataset import Dataset
+from evalgate.dataset import Dataset, Provenance
 from evalgate.results import DatasetRef, Results, input_digest
-from evalgate.scorers import Score, ScoreKind, Scorer
+from evalgate.scorers import JudgePass, Score, ScoreKind, Scorer
 from evalgate.stats import (
     Correction,
     PairedResult,
@@ -99,6 +99,8 @@ class SliceComparison:
             different input. Non-empty means this verdict rests on fewer items than `size`.
         corrected: True when this slice's own interval said regressed, but with this many
             slices tested the drop is within what chance produces. The report says so.
+        case_regressions: Reviewed cases that passed the baseline and failed a binary gate.
+        case_missing: Previously passing reviewed cases omitted by the head run.
     """
 
     tier: Tier
@@ -112,6 +114,8 @@ class SliceComparison:
     gap: Gap | None
     unpaired: tuple[str, ...]
     corrected: bool = False
+    case_regressions: tuple[str, ...] = ()
+    case_missing: tuple[str, ...] = ()
 
     @property
     def n(self) -> int:
@@ -242,8 +246,25 @@ def compare(config: Config, base: Results, head: Results) -> Comparison:
         ScorerError: If a scorer cannot read an output.
     """
     dataset = config.dataset
+    base_judge = base.header.judgement_sha256 if base.header is not None else None
+    head_judge = head.header.judgement_sha256 if head.header is not None else None
+    if base_judge != head_judge:
+        raise GateError(
+            "results use different grading setups; rerun judgement with the same rubric and model"
+        )
+    if any(
+        isinstance(scorer, JudgePass) != (base_judge is not None)
+        for scorer in config.scorers.values()
+    ):
+        raise GateError(
+            "graded results require judge_pass scorers, and judge_pass requires graded results"
+        )
     for results in (base, head):
         named = results.header.dataset if results.header is not None else None
+        if base_judge is not None and (
+            named is None or named.sha256 != dataset.manifest.content_sha256
+        ):
+            raise GateError("graded results must use the current dataset; regrade both target runs")
         if named is not None and named.name != dataset.manifest.name:
             raise GateError(
                 f"{results.label}: produced from dataset {named.name!r}, but the "
@@ -272,7 +293,7 @@ def compare(config: Config, base: Results, head: Results) -> Comparison:
             rule,
             slice_ref,
             dataset,
-            config.scorers[rule.scorer].kind,
+            config.scorers[rule.scorer],
             base_scores[rule.scorer],
             head_scores[rule.scorer],
             excluded,
@@ -297,17 +318,34 @@ def _compare_slice(
     rule: Rule,
     slice_ref: SliceRef,
     dataset: Dataset,
-    kind: ScoreKind,
+    scorer: Scorer,
     base: Mapping[str, Score],
     head: Mapping[str, Score],
     excluded: set[str],
     confidence: float,
 ) -> SliceComparison:
     """Pair one slice's items across the two runs and run the test the scorer's kind calls for."""
-    members = [item.id for item in dataset.slice(slice_ref.dimension, slice_ref.value)]
+    items = dataset.slice(slice_ref.dimension, slice_ref.value)
+    members = [item.id for item in items]
     paired = [item for item in members if item in base and item in head and item not in excluded]
     unpaired = tuple(item for item in members if item not in paired)
     tolerance = rule.tolerance_for(slice_ref)
+    kind = scorer.kind
+    case_regressions: tuple[str, ...] = ()
+    case_missing: tuple[str, ...] = ()
+    if rule.tier is Tier.GATE and kind is ScoreKind.BINARY and not isinstance(scorer, JudgePass):
+        protected = tuple(
+            item.id
+            for item in items
+            if (item.ratchet or item.provenance is Provenance.PROMOTED_FAILURE)
+            and item.id in base
+            and item.id not in excluded
+            and base[item.id].value == 1.0
+        )
+        case_regressions = tuple(
+            item_id for item_id in protected if item_id in head and head[item_id].value == 0.0
+        )
+        case_missing = tuple(item_id for item_id in protected if item_id not in head)
 
     gap: Gap | None = None
     result: PairedResult | None = None
@@ -342,9 +380,11 @@ def _compare_slice(
         result=result,
         # Provisional for a slice with an interval: `_decide` sets the verdict once every slice
         # in its family has been tested.
-        verdict=Verdict.INCONCLUSIVE,
+        verdict=Verdict.REGRESSED if case_regressions else Verdict.INCONCLUSIVE,
         gap=gap,
         unpaired=unpaired,
+        case_regressions=case_regressions,
+        case_missing=case_missing,
     )
 
 
@@ -366,12 +406,16 @@ def _decide(
     for index, result, final in zip(
         members, results, family_verdicts(results, correction), strict=True
     ):
+        entry = slices[index]
         alone = judge(result.interval, result.tolerance)
-        decided[index] = replace(
-            slices[index],
-            verdict=final,
-            corrected=alone is Verdict.REGRESSED and final is not Verdict.REGRESSED,
-        )
+        if not entry.case_regressions:
+            decided[index] = replace(
+                entry,
+                verdict=Verdict.INCONCLUSIVE
+                if entry.case_missing and final is not Verdict.REGRESSED
+                else final,
+                corrected=alone is Verdict.REGRESSED and final is not Verdict.REGRESSED,
+            )
     return tuple(decided)
 
 

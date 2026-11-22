@@ -7,6 +7,7 @@ preflight. Transport, scoring and CLI presentation stay outside it.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -14,7 +15,7 @@ from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict, JsonValue, ValidationError
 
-from evalgate.dataset import Dataset, Item
+from evalgate.dataset import Item
 from evalgate.results import ItemResult, input_digest
 from evalgate.runner import Target
 
@@ -171,7 +172,7 @@ def _write_recording(path: Path, data: bytes) -> _Recording | None:
 
 
 def plan_model_run(
-    dataset: Dataset,
+    dataset: Iterable[Item],
     provider: Provider,
     directory: Path,
     *,

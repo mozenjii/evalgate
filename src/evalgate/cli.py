@@ -16,6 +16,7 @@ The exit code is the product, because it is what CI reads:
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from datetime import UTC, datetime
 from enum import IntEnum
@@ -25,10 +26,14 @@ from typing import Annotated, Literal, NoReturn
 import typer
 
 from evalgate import gate
+from evalgate.calibration import calibrate_command
+from evalgate.cases import mine_command, promote_command
 from evalgate.config import Config, ConfigError, load_config
 from evalgate.dataset import Item
-from evalgate.model_run import ModelRunError, plan_model_run
+from evalgate.judge import Judge, JudgeError, label_rows, plan_judging, read_rubric
+from evalgate.model_run import ModelRun, ModelRunError, plan_model_run
 from evalgate.ollama import Ollama, OllamaError
+from evalgate.power import power_command
 from evalgate.report import render_markdown, render_text
 from evalgate.results import (
     DatasetRef,
@@ -65,6 +70,10 @@ app = typer.Typer(
     no_args_is_help=True,
     help="A CI check that fails a pull request when an LLM feature gets worse on a slice.",
 )
+app.command("calibrate")(calibrate_command)
+app.command("mine")(mine_command)
+app.command("promote")(promote_command)
+app.command("power")(power_command)
 
 ConfigOption = Annotated[
     Path, typer.Option("--config", help="Path to evalgate.toml.", show_default=True)
@@ -152,8 +161,7 @@ def run(
             _fail("--ollama-model requires --cassette-dir and cannot be combined with --target")
         if max_cost_usd is not None and not 0 <= max_cost_usd < float("inf"):
             _fail("--max-cost-usd must be finite and non-negative")
-        if allow_local_model and max_calls is None and not dry_run:
-            _fail("--allow-local-model requires an explicit --max-calls")
+        _require_call_cap(allow_local_model, max_calls, dry_run)
         _run_model(
             config,
             label,
@@ -207,10 +215,7 @@ def _run_model(
     try:
         provider = Ollama(model, port)
         plan = plan_model_run(config.dataset, provider, directory, redactor=redact)
-        typer.echo(
-            f"{plan.hits} replay hit(s), {plan.unrecorded_items} item(s) missing, "
-            f"up to {plan.misses} live generation(s) if enabled, estimated USD 0.00"
-        )
+        _show_model_plan(plan)
         if dry_run:
             return
         redactor = None
@@ -229,8 +234,80 @@ def _run_model(
         typer.echo(f"  {not_run} item(s) not run (no recording)")
 
 
+def _require_call_cap(allow_local: bool, max_calls: int | None, dry_run: bool) -> None:
+    """Require explicit authorization and a per-invocation cap before local inference."""
+    if allow_local and max_calls is None and not dry_run:
+        _fail("--allow-local-model requires an explicit --max-calls")
+
+
+def _show_model_plan(plan: ModelRun) -> None:
+    """Print the same request estimate for generation and grading."""
+    typer.echo(
+        f"{plan.hits} replay hit(s), {plan.unrecorded_items} item(s) missing, "
+        f"up to {plan.misses} live generation(s) if enabled, estimated USD 0.00"
+    )
+
+
+@app.command()
+def judge(
+    source: Annotated[Path, typer.Argument(help="Stored results from the target to grade.")],
+    rubric: Annotated[Path, typer.Option(help="Text instruction for one binary rubric.")],
+    ollama_model: Annotated[str, typer.Option(help="Locally installed Ollama judge model.")],
+    cassette_dir: Annotated[Path, typer.Option(help="Directory of grade recordings.")],
+    out: Annotated[Path, typer.Option(help="Graded results file to write.")],
+    config_path: ConfigOption = Path("evalgate.toml"),
+    label: Annotated[str | None, typer.Option(help="Override the target's run label.")] = None,
+    ollama_port: Annotated[int, typer.Option(min=1, max=65535)] = 11434,
+    replicate: Annotated[int, typer.Option(min=0, help="Use a separate recording namespace.")] = 0,
+    allow_local_model: Annotated[
+        bool, typer.Option(help="Allow cache misses to call cloud-disabled local Ollama.")
+    ] = False,
+    max_calls: Annotated[int | None, typer.Option(min=0, help="Cap on live generations.")] = None,
+    dry_run: Annotated[
+        bool, typer.Option(help="Print the model call estimate without writing.")
+    ] = False,
+) -> None:
+    """Grade stored target results against one binary rubric using capture or offline replay."""
+    _require_call_cap(allow_local_model, max_calls, dry_run)
+    if out.resolve() == source.resolve():
+        _fail("graded results must have a separate output path")
+    config = _config(config_path)
+    try:
+        target_results = read_results(source)
+        provider = Ollama(ollama_model, ollama_port)
+        grader = Judge(provider, rubric.stem, read_rubric(rubric), replicate)
+        grading = plan_judging(config.dataset, target_results, grader, cassette_dir)
+        plan = grading.model
+        _show_model_plan(plan)
+        if dry_run:
+            return
+        cap = max_calls or 0
+        if allow_local_model and 0 < plan.misses <= cap:
+            provider.validate_local()
+        items = grading.results(plan.execute(allow_local=allow_local_model, max_calls=cap))
+    except (JudgeError, ResultsError, OllamaError, ModelRunError) as error:
+        _fail(str(error))
+    not_run = 0 if allow_local_model else plan.unrecorded_items
+    _write_run(
+        config,
+        label or target_results.label,
+        out,
+        items,
+        not_run=not_run,
+        judgement_sha256=grader.fingerprint,
+    )
+    if not_run:
+        typer.echo(f"  {not_run} item(s) not run (no recording)")
+
+
 def _write_run(
-    config: Config, label: str, out: Path, items: tuple[ItemResult, ...], *, not_run: int = 0
+    config: Config,
+    label: str,
+    out: Path,
+    items: tuple[ItemResult, ...],
+    *,
+    not_run: int = 0,
+    judgement_sha256: str | None = None,
 ) -> None:
     """Write a run in the same results format for every target."""
     manifest = config.dataset.manifest
@@ -241,6 +318,7 @@ def _write_run(
         ),
         created_at=datetime.now(UTC),
         not_run=not_run or None,
+        judgement_sha256=judgement_sha256,
     )
     try:
         write_results(out, header, items)
@@ -251,6 +329,17 @@ def _write_run(
     typer.echo(f"{label}: {len(items)} items from {manifest.name} v{manifest.version} -> {out}")
     if errors:
         typer.secho(f"  {errors} item(s) raised; they count as failures", fg=typer.colors.YELLOW)
+
+
+@app.command("judge-labels")
+def judge_labels(source: Annotated[Path, typer.Argument(help="Graded results file.")]) -> None:
+    """Export judge predictions as JSONL for independent human review and calibration."""
+    try:
+        rows = label_rows(read_results(source))
+    except (JudgeError, ResultsError) as error:
+        _fail(str(error))
+    for row in rows:
+        typer.echo(json.dumps(row.model_dump(exclude_none=True), ensure_ascii=True))
 
 
 def _progress(total: int) -> Callable[[int, Item], None]:

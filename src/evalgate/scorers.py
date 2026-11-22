@@ -34,6 +34,7 @@ __all__ = [
     "EditSimilarity",
     "ExactMatch",
     "JsonSchemaMatch",
+    "JudgePass",
     "RegexMatch",
     "Score",
     "ScoreKind",
@@ -161,6 +162,25 @@ class Scorer(Protocol):
     def score(self, output: JsonValue, expected: JsonValue | None) -> Score:
         """Score one item's output against its expectation."""
         ...
+
+
+@dataclass(frozen=True)
+class JudgePass:
+    """Score the binary verdict in a separately graded results file."""
+
+    name: str = "judge_pass"
+
+    @property
+    def kind(self) -> ScoreKind:
+        """Rubric verdicts are binary."""
+        return ScoreKind.BINARY
+
+    def score(self, output: JsonValue, expected: JsonValue | None) -> Score:
+        """Use the strict boolean verdict without applying the original target expectation."""
+        del expected
+        if not isinstance(output, bool):
+            raise ScorerError(f"{self.name}: graded output must be a boolean")
+        return Score(float(output), self.kind)
 
 
 def _require_expected(expected: JsonValue | None, scorer: str) -> JsonValue:

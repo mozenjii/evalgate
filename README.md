@@ -136,12 +136,12 @@ an item that produced nothing.
   enforces a call cap and can redact outputs before persistence. The Action replays saved outputs
   and reports missing recordings.
 
-## Not built yet
+## Judge, calibration, and benchmarks
 
-The LLM judge and its calibration against human labels, telling you before you build a dataset
-how many items a slice needs,
-log mining, promoting a production failure to a permanent case, and the seeded-regression benchmark
-that measures the gate's own detection and false-alarm rates.
+The implementation includes a [local binary judge](docs/judge.md), a [calibration workflow](docs/calibration.md)
+for independent human labels, [trace review and case promotion](docs/cases.md), and a
+[seeded regression benchmark and power planner](docs/benchmark.md). The judge still needs a
+human-labelled validation study. The benchmark results describe a synthetic paired population.
 
 See the [release guide](docs/release.md) for building and verifying distribution candidates.
 
@@ -225,11 +225,12 @@ measure the noise floor.
 - [x] Config file, results files, and a GitHub Action that comments on the pull request
 - [x] The statistics settled by evidence: interval error at the tolerance, a correction across
       slices, published error rates
-- [ ] A real model: record-and-replay, redaction, a budget cap, no network in tests
+- [x] A real model: record-and-replay, redaction, a budget cap, no network in tests
 - [ ] A release: PyPI package and a tagged action
-- [ ] LLM judge with human calibration
-- [ ] Failure-to-case promotion and log mining
-- [ ] Injected-regression benchmark and write-up
+- [x] Local LLM judge and tools for human calibration
+- [ ] Human-labelled validation study
+- [x] Reviewed failure-to-case promotion and offline log mining
+- [x] Synthetic seeded-regression benchmark and write-up
 
 ## Development
 

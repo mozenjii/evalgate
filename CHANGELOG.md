@@ -13,3 +13,7 @@
   replay. The public Iris example exercises capture and replay end to end.
 - Isolated distribution builds with release verification and GitHub Actions Trusted Publishing
   support.
+- Local binary rubric scoring and offline replay, judge calibration from independently supplied
+  labels, and paired probes and ensemble comparison when the corresponding evidence is present.
+- Reviewed case mining and promotion, with strict protection for deterministic binary cases
+  that previously passed, plus a reproducible seeded-regression benchmark and power planner.

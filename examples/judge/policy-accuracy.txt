@@ -1,0 +1,1 @@
+Pass only if the candidate gives the same policy guidance as the reference answer, including any time limit and where the customer should start. Fail if it contradicts the reference or omits any of those instructions. Paraphrasing alone is fine.
