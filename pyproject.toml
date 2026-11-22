@@ -1,10 +1,12 @@
 [project]
-name = "evalgate"
-version = "0.0.0"
+name = "mozenjii-evalgate"
+dynamic = ["version"]
 description = "A CI check for LLM features: it fails a pull request when quality drops on a slice, and says whether the drop is real or noise."
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [{ name = "Mozenjii" }]
+license = "MIT"
+license-files = ["LICENSE"]
 keywords = ["llm", "evaluation", "regression", "ci", "statistics"]
 classifiers = [
   "Development Status :: 2 - Pre-Alpha",
@@ -55,8 +57,15 @@ dev = [
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.hatch.version]
+path = "src/evalgate/__init__.py"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/evalgate"]
+
+# Releases are built from an explicit source set even in a developer checkout.
+[tool.hatch.build.targets.sdist]
+only-include = ["src/evalgate", "pyproject.toml", "README.md", "CHANGELOG.md", "LICENSE"]
 
 # ---------------------------------------------------------------------------
 # Lint and format. One tool, so formatting can never disagree with linting.
