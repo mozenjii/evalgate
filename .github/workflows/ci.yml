@@ -8,8 +8,6 @@
 # Not gated yet, so that the absence is a decision and not an oversight:
 #
 #   - Live model calls. Tests block sockets and the model replay job runs offline.
-#   - The pull-request comment. The action job below runs the whole check on every push,
-#     but with comments off: a push has no pull request to comment on.
 #   - Accessibility and performance budgets. They need a URL, and there is no UI.
 #
 # The matrix is the pinned interpreter plus the oldest version the package claims to
@@ -136,6 +134,9 @@ jobs:
   action:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - uses: actions/checkout@v5
 
@@ -143,12 +144,12 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Run the action against this commit
+      - name: Run the action and report the pull request verdict
         uses: ./
         with:
           config: examples/triage/evalgate.toml
-          base-ref: ${{ github.sha }}
-          comment: "false"
+          base-ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          comment: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && 'true' || 'false' }}
 
       - name: The installed command finds the seeded regression
         run: |
@@ -173,9 +174,17 @@ jobs:
         with:
           python-version: "3.12"
       - uses: actions/cache/restore@v4
+        id: cassettes
         with:
           path: ${{ runner.temp }}/iris-cassettes
           key: evalgate-iris-qwen2.5-0.5b-v1
+      - name: Seed a missing cache with the public recordings
+        if: steps.cassettes.outputs.cache-hit != 'true'
+        env:
+          CASSETTE_DIR: ${{ runner.temp }}/iris-cassettes
+        run: |
+          mkdir -p "$CASSETTE_DIR"
+          cp examples/ollama/recordings/*.json "$CASSETTE_DIR/"
       - name: Replay the public example with no model server
         id: replay
         uses: ./
@@ -185,6 +194,21 @@ jobs:
           comment: "false"
           ollama-model: qwen2.5:0.5b
           cassette-dir: ${{ runner.temp }}/iris-cassettes
-      - name: The small example reports unguarded slices
+      - name: Verify all nine items replayed on both sides
         run: |
           grep -F '3 not guarded' "$RUNNER_TEMP/evalgate-report.md"
+          test "$(wc -l < "$RUNNER_TEMP/evalgate-base.jsonl")" -eq 10
+          test "$(wc -l < "$RUNNER_TEMP/evalgate-head.jsonl")" -eq 10
+          cmp <(tail -n +2 "$RUNNER_TEMP/evalgate-base.jsonl") \
+              <(tail -n +2 "$RUNNER_TEMP/evalgate-head.jsonl")
+          if grep -F 'items not run' "$RUNNER_TEMP/evalgate-report.md"; then
+            exit 1
+          fi
+      - uses: actions/cache/save@v4
+        if: >-
+          steps.cassettes.outputs.cache-hit != 'true'
+          && (github.event_name != 'pull_request'
+              || github.event.pull_request.head.repo.full_name == github.repository)
+        with:
+          path: ${{ runner.temp }}/iris-cassettes
+          key: evalgate-iris-qwen2.5-0.5b-v1

@@ -55,7 +55,7 @@ The Action uses the same directory for both checkouts. Forks can replay accessib
 entries. The report lists items omitted on either side, and slices with too few pairs follow
 the configured inconclusive policy.
 
-To prime the Iris cache, run the live example on a trusted runner under the default-branch
-cache scope, then save the recording directory with `actions/cache/save` under
-`evalgate-iris-qwen2.5-0.5b-v1`. The replay workflow restores that key and also works with an
-empty cache, reporting every Iris item as not run.
+The repository's replay job restores `evalgate-iris-qwen2.5-0.5b-v1`. On a cache miss it
+uses the [nine checked-in recordings](../examples/ollama/recordings) from the public Iris
+example, captured with `qwen2.5:0.5b` on Ollama 0.40.17. It verifies all nine items on both
+sides and saves the cache on trusted runs.

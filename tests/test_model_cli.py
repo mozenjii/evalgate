@@ -124,3 +124,26 @@ def test_failed_redaction_leaves_no_raw_output(tmp_path: Path, monkeypatch: Monk
 def test_socket_connections_are_blocked_by_default() -> None:
     with socket.socket() as client, pytest.raises(AssertionError, match="network access"):
         client.connect(("127.0.0.1", 11434))
+
+
+def test_public_example_replays_all_nine_recordings(tmp_path: Path) -> None:
+    example = CONFIG.parents[1] / "ollama"
+    out = tmp_path / "iris.jsonl"
+    result = invoke(
+        "run",
+        "--config",
+        str(example / "evalgate.toml"),
+        "--out",
+        str(out),
+        "--label",
+        "iris",
+        "--ollama-model",
+        "qwen2.5:0.5b",
+        "--cassette-dir",
+        str(example / "recordings"),
+    )
+    assert result.exit_code == 0, result.output
+    replay = read_results(out)
+    assert replay.header is not None and replay.header.not_run is None
+    assert len(replay.items) == 9
+    assert all(item.error is None for item in replay.items)
