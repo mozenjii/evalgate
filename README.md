@@ -132,11 +132,14 @@ an item that produced nothing.
 - **A config file** holds everything a person decides. Tolerances have no default: how much worse a
   slice may get is a judgement about that slice, and a default would be a number nobody chose.
 - **A CLI and a GitHub Action** that turn all of that into a pull-request comment and an exit code.
+- **Local model capture and replay.** The Ollama runner estimates live calls before it runs,
+  enforces a call cap and can redact outputs before persistence. The Action replays saved outputs
+  and reports missing recordings.
 
 ## Not built yet
 
-The LLM judge and its calibration against human labels, record-and-replay for model calls,
-telling you before you build a dataset how many items a slice needs,
+The LLM judge and its calibration against human labels, telling you before you build a dataset
+how many items a slice needs,
 log mining, promoting a production failure to a permanent case, and the seeded-regression benchmark
 that measures the gate's own detection and false-alarm rates.
 
