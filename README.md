@@ -3,6 +3,16 @@
 A CI check for LLM features. It fails a pull request when quality drops on any slice of your data,
 and tells you whether the drop is real or just noise.
 
+## Install
+
+```bash
+pip install mozenjii-evalgate
+```
+
+The Python import and command are both `evalgate`. Get the first release from
+[GitHub Releases](https://github.com/mozenjii/evalgate/releases/tag/v0.1.0) or
+[PyPI](https://pypi.org/project/mozenjii-evalgate/).
+
 ## The problem
 
 When you change a prompt, swap a model or tweak a retriever, a handful of spot checks usually look
@@ -73,7 +83,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt   # your project's own dependencies
-      - uses: mozenjii/evalgate@main
+      - uses: mozenjii/evalgate@v0
 ```
 
 The action runs your target on the pull request's base commit and on its head, each in its own
@@ -81,6 +91,9 @@ checkout, compares them, writes the report to the job summary and keeps one comm
 request up to date. It installs into your workflow's Python on purpose: your target runs inside
 evalgate, so it needs your dependencies beside it. A pull request from a fork gets a read-only
 token, so it gets the job summary but no comment.
+
+The [consumer workflow](.github/workflows/action-consumer.yml) exercises the public alias.
+Use `mozenjii/evalgate@v0.1.0` to pin the first release.
 
 The [local Ollama walkthrough](docs/ollama.md) shows how to estimate calls, record a run at
 zero provider cost, and replay it offline in the CLI or Action.
@@ -226,7 +239,7 @@ measure the noise floor.
 - [x] The statistics settled by evidence: interval error at the tolerance, a correction across
       slices, published error rates
 - [x] A real model: record-and-replay, redaction, a budget cap, no network in tests
-- [ ] A release: PyPI package and a tagged action
+- [x] A release: PyPI package and a tagged action
 - [x] Local LLM judge and tools for human calibration
 - [ ] Human-labelled validation study
 - [x] Reviewed failure-to-case promotion and offline log mining

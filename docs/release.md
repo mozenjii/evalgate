@@ -1,8 +1,8 @@
 # Release EvalGate
 
-EvalGate's Python import and command are both `evalgate`. This project will publish as
-`mozenjii-evalgate`. PyPI's existing `evalgate` listing belongs to another project.
-[Current PyPI listing](https://pypi.org/project/evalgate/)
+EvalGate's Python import and command are both `evalgate`. Install the distribution
+`mozenjii-evalgate` from PyPI or download a release artifact from GitHub.
+[PyPI listing](https://pypi.org/project/mozenjii-evalgate/) · [GitHub Releases](https://github.com/mozenjii/evalgate/releases)
 
 ## Verify a candidate
 
@@ -23,7 +23,7 @@ The [changelog](../CHANGELOG.md) records the changes included in the candidate.
 
 ## Set up publishing
 
-The first candidate uses the [MIT license](../LICENSE) and the distribution name
+The first release uses the [MIT license](../LICENSE) and the distribution name
 `mozenjii-evalgate`. Set the GitHub repository Actions variable `PYPI_PROJECT_NAME` to
 `mozenjii-evalgate`. For a future release, update `__version__` in
 `src/evalgate/__init__.py` and refresh `uv.lock`. A release tag must match

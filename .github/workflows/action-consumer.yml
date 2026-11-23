@@ -1,0 +1,37 @@
+name: use the public Action
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/action-consumer.yml
+
+permissions:
+  contents: read
+
+jobs:
+  tagged-action:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compare the triage example using the public v0 alias
+        id: evalgate
+        uses: mozenjii/evalgate@v0
+        with:
+          config: examples/triage/evalgate.toml
+          base-ref: ${{ github.sha }}
+          comment: "false"
+      - name: Verify the comparison result
+        shell: bash
+        env:
+          EXIT_CODE: ${{ steps.evalgate.outputs.exit-code }}
+        run: |
+          test "$EXIT_CODE" = 0
+          grep -F '3 not guarded' "$RUNNER_TEMP/evalgate-report.md"

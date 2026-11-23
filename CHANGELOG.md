@@ -1,8 +1,6 @@
 # Changelog
 
-## Unreleased
-
-### 0.1.0 candidate
+## 0.1.0 — 2026-11-23
 
 - Versioned JSONL datasets and results files, deterministic scorers, and a CLI for running
   and comparing targets across slices.
